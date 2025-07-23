@@ -4,23 +4,14 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { X, Settings, Sliders } from "lucide-react";
+import { ProcessingOptions } from "@/lib/types";
 
 interface SettingsPanelProps {
   similarityThreshold: number;
   onSimilarityThresholdChange: (value: number) => void;
   onClose: () => void;
-  settings?: {
-    autoRename: boolean;
-    preserveOriginal: boolean;
-    optimizeQuality: boolean;
-    maxDimension: number;
-  };
-  onSettingsChange?: (settings: {
-    autoRename: boolean;
-    preserveOriginal: boolean;
-    optimizeQuality: boolean;
-    maxDimension: number;
-  }) => void;
+  settings: ProcessingOptions;
+  onSettingsChange?: (settings: ProcessingOptions) => void;
 }
 
 const SettingsPanel = (props: SettingsPanelProps) => {
@@ -94,7 +85,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 </p>
               </div>
               <Switch 
-                checked={props.settings?.autoRename}
+                checked={props.settings.autoRename ?? true}
                 onCheckedChange={(checked) => 
                   props.onSettingsChange?.({ ...props.settings, autoRename: checked })
                 }
@@ -110,7 +101,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 </p>
               </div>
               <Switch 
-                checked={props.settings?.preserveOriginal}
+                checked={props.settings.preserveOriginal ?? true}
                 onCheckedChange={(checked) => 
                   props.onSettingsChange?.({ ...props.settings, preserveOriginal: checked })
                 }
@@ -126,7 +117,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 </p>
               </div>
               <Switch 
-                checked={props.settings?.optimizeQuality}
+                checked={props.settings.optimizeQuality ?? false}
                 onCheckedChange={(checked) => 
                   props.onSettingsChange?.({ ...props.settings, optimizeQuality: checked })
                 }
@@ -142,7 +133,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
                 </p>
               </div>
               <Slider
-                value={[props.settings?.maxDimension]}
+                value={[props.settings.maxDimension ?? 1920]}
                 onValueChange={(value) => 
                   props.onSettingsChange?.({ ...props.settings, maxDimension: value[0] })
                 }
@@ -153,7 +144,7 @@ const SettingsPanel = (props: SettingsPanelProps) => {
               />
               <div className="flex items-center justify-between text-sm text-muted-foreground">
                 <span>800px</span>
-                <span className="font-medium text-primary">{props.settings?.maxDimension}px</span>
+                <span className="font-medium text-primary">{props.settings.maxDimension ?? 1920}px</span>
                 <span>4000px</span>
               </div>
             </div>

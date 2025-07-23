@@ -1,21 +1,111 @@
 import { pipeline } from "@huggingface/transformers";
+import {
+  calculateSimilarity,
+  calculateHammingDistance,
+  calculateWeightedSimilarity,
+  LSHIndex,
+  cosineSimilarity
+} from "./utils";
+import { hashCache } from "./hashCacheService";
+import { HashType, HashResult, ImageQuality, SimilarityGroup } from "./types";
 
-export interface ImageQuality {
-  sharpness: number;
-  brightness: number;
-  contrast: number;
-  score: number;
-}
+// 計算平均哈希 (aHash)
+export const calculateAverageHash = async (imageFile: File): Promise<string> => {
+  // 嘗試從緩存獲取
+  const cachedHash = await hashCache.getMultiHash(imageFile);
+  if (cachedHash?.aHash) {
+    return cachedHash.aHash;
+  }
+  
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+    const img = new Image();
+    
+    img.onload = () => {
+      // 縮放到8x8像素
+      canvas.width = 8;
+      canvas.height = 8;
+      ctx.drawImage(img, 0, 0, 8, 8);
+      
+      // 獲取像素數據並計算平均值
+      const imageData = ctx.getImageData(0, 0, 8, 8);
+      const pixels = imageData.data;
+      let sum = 0;
+      
+      for (let i = 0; i < pixels.length; i += 4) {
+        // 計算灰階值
+        const gray = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+        sum += gray;
+      }
+      
+      const average = sum / 64;
+      
+      // 生成哈希
+      let hash = '';
+      for (let i = 0; i < pixels.length; i += 4) {
+        const gray = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+        hash += gray > average ? '1' : '0';
+      }
+      
+      resolve(hash);
+    };
+    
+    img.src = URL.createObjectURL(imageFile);
+  });
+};
 
-export interface SimilarityGroup {
-  id: string;
-  photos: string[];
-  bestPhoto: string;
-  averageSimilarity: number;
-}
+// 計算差分哈希 (dHash) - 相鄰像素比較
+export const calculateDifferenceHash = async (imageFile: File): Promise<string> => {
+  // 嘗試從緩存獲取
+  const cachedHash = await hashCache.getMultiHash(imageFile);
+  if (cachedHash?.dHash) {
+    return cachedHash.dHash;
+  }
+  
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+    const img = new Image();
+    
+    img.onload = () => {
+      // 差分哈希使用 9x8 縮放，然後比較相鄰像素
+      canvas.width = 9;
+      canvas.height = 8;
+      ctx.drawImage(img, 0, 0, 9, 8);
+      
+      const imageData = ctx.getImageData(0, 0, 9, 8);
+      const pixels = imageData.data;
+      
+      let hash = '';
+      // 逐行比較相鄰像素
+      for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) {
+          const idx1 = (y * 9 + x) * 4;
+          const idx2 = (y * 9 + x + 1) * 4;
+          
+          const gray1 = 0.299 * pixels[idx1] + 0.587 * pixels[idx1 + 1] + 0.114 * pixels[idx1 + 2];
+          const gray2 = 0.299 * pixels[idx2] + 0.587 * pixels[idx2 + 1] + 0.114 * pixels[idx2 + 2];
+          
+          hash += gray1 > gray2 ? '1' : '0';
+        }
+      }
+      
+      resolve(hash);
+    };
+    
+    img.src = URL.createObjectURL(imageFile);
+  });
+};
 
-// 計算圖片的感知哈希（簡化版）
+// 計算感知哈希 (pHash) - 原始方法，重命名以明確區分
 export const calculatePerceptualHash = async (imageFile: File): Promise<string> => {
+  // 嘗試從緩存獲取
+  const cachedHash = await hashCache.getHash(imageFile);
+  if (cachedHash) {
+    return cachedHash;
+  }
+  
   return new Promise((resolve) => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d')!;
@@ -47,6 +137,15 @@ export const calculatePerceptualHash = async (imageFile: File): Promise<string> 
         hash += gray > average ? '1' : '0';
       }
       
+      // 將哈希存入緩存
+      (async () => {
+        try {
+          await hashCache.storeHash(imageFile, hash);
+        } catch (e) {
+          console.warn('哈希緩存失敗:', e);
+        }
+      })();
+      
       resolve(hash);
     };
     
@@ -54,29 +153,88 @@ export const calculatePerceptualHash = async (imageFile: File): Promise<string> 
   });
 };
 
-// 計算兩個哈希的相似度
-export const calculateSimilarity = (hash1: string, hash2: string): number => {
-  let differences = 0;
-  for (let i = 0; i < hash1.length; i++) {
-    if (hash1[i] !== hash2[i]) {
-      differences++;
-    }
+// 計算完整的哈希結果（包含所有類型哈希）
+export const calculateAllHashes = async (imageFile: File): Promise<HashResult> => {
+  // 嘗試從緩存獲取
+  const cachedHashes = await hashCache.getMultiHash(imageFile);
+  if (cachedHashes && cachedHashes.pHash && cachedHashes.dHash && cachedHashes.aHash) {
+    return cachedHashes;
   }
   
-  // 轉換為相似度百分比
-  return ((hash1.length - differences) / hash1.length) * 100;
+  try {
+    const [pHash, dHash, aHash] = await Promise.all([
+      calculatePerceptualHash(imageFile),
+      calculateDifferenceHash(imageFile),
+      calculateAverageHash(imageFile)
+    ]);
+    
+    const hashes = { pHash, dHash, aHash };
+    
+    // 將哈希存入緩存
+    (async () => {
+      try {
+        await hashCache.storeMultiHash(imageFile, hashes);
+      } catch (e) {
+        console.warn('哈希緩存失敗:', e);
+      }
+    })();
+    
+    return hashes;
+  } catch (error) {
+    console.error('計算哈希失敗:', error);
+    throw error;
+  }
 };
 
-// 計算兩個向量的餘弦相似度
-function cosineSimilarity(vecA: number[], vecB: number[]): number {
-  const dot = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
-  const normA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
-  const normB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
-  return dot / (normA * normB);
-}
+// 計算顏色直方圖
+export const calculateColorHistogram = async (imageFile: File): Promise<number[]> => {
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+    const img = new Image();
+    
+    img.onload = () => {
+      canvas.width = Math.min(img.width, 100);
+      canvas.height = Math.min(img.height, 100);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const pixels = imageData.data;
+      
+      // 使用簡化的顏色空間，每個通道分4個桶
+      const histSize = 4;
+      const histogram = new Array(histSize * histSize * histSize).fill(0);
+      
+      for (let i = 0; i < pixels.length; i += 4) {
+        const r = Math.floor(pixels[i] / 64);     // 0-3
+        const g = Math.floor(pixels[i + 1] / 64); // 0-3
+        const b = Math.floor(pixels[i + 2] / 64); // 0-3
+        
+        const idx = r * histSize * histSize + g * histSize + b;
+        histogram[idx]++;
+      }
+      
+      // 歸一化直方圖
+      const totalPixels = (pixels.length / 4);
+      for (let i = 0; i < histogram.length; i++) {
+        histogram[i] = histogram[i] / totalPixels;
+      }
+      
+      resolve(histogram);
+    };
+    
+    img.src = URL.createObjectURL(imageFile);
+  });
+};
 
 // 分析圖片品質
 export const analyzeImageQuality = async (imageFile: File): Promise<ImageQuality> => {
+  // 嘗試從緩存獲取
+  const cachedQuality = await hashCache.getQuality(imageFile);
+  if (cachedQuality) {
+    return cachedQuality;
+  }
+  
   return new Promise((resolve) => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d')!;
@@ -159,31 +317,97 @@ export const analyzeImageQuality = async (imageFile: File): Promise<ImageQuality
         fileSizeScore * 0.1
       );
       
-      resolve({
+      const quality = {
         sharpness: normalizedSharpness,
         brightness: normalizedBrightness,
         contrast: normalizedContrast,
         score: Math.round(score)
-      });
+      };
+      
+      // 將品質資訊存入緩存
+      (async () => {
+        try {
+          await hashCache.storeQuality(imageFile, quality);
+        } catch (e) {
+          console.warn('品質緩存失敗:', e);
+        }
+      })();
+      
+      resolve(quality);
     };
     
     img.src = URL.createObjectURL(imageFile);
   });
 };
 
-// 使用AI模型進行圖片特徵提取（可選）
+// 使用AI模型進行圖片特徵提取（增強版）
+const modelCache = new Map<string, any>();
 export const extractImageFeatures = async (imageFile: File) => {
+  // 嘗試從緩存獲取
+  const cachedFeatures = await hashCache.getFeatures(imageFile);
+  if (cachedFeatures) {
+    return cachedFeatures;
+  }
+  
   try {
-    const extractor = await pipeline(
-      "feature-extraction",
-      "microsoft/resnet-50",
-      { device: "webgpu" }
-    );
+    const modelId = "microsoft/resnet-50";
+    let extractor = modelCache.get(modelId);
     
-    const features = await extractor(URL.createObjectURL(imageFile));
-    return features;
+    if (!extractor) {
+      try {
+        console.log('載入模型中...');
+        extractor = await pipeline(
+          "feature-extraction",
+          modelId,
+          { device: "webgpu" }
+        );
+        modelCache.set(modelId, extractor);
+        console.log('模型載入完成');
+      } catch (gpuError) {
+        console.warn("WebGPU 不支援，嘗試使用 CPU 模式:", gpuError);
+        try {
+          extractor = await pipeline(
+            "feature-extraction",
+            modelId,
+            { device: "cpu" }
+          );
+          modelCache.set(modelId, extractor);
+          console.log('模型載入完成 (CPU 模式)');
+        } catch (cpuError) {
+          console.error("模型載入失敗:", cpuError);
+          throw new Error("無法載入特徵提取模型");
+        }
+      }
+    }
+    
+    const objectUrl = URL.createObjectURL(imageFile);
+    try {
+      const features = await extractor(objectUrl, {
+        pooling: "mean",
+        normalize: true
+      });
+      
+      const featureArray = Array.isArray(features) ? 
+        features.flat(Infinity) as number[] : 
+        null;
+      
+      // 存入緩存
+      if (featureArray) {
+        (async () => {
+          try {
+            await hashCache.storeFeatures(imageFile, featureArray);
+          } catch (e) {
+            console.warn('特徵向量緩存失敗:', e);
+          }
+        })();
+      }
+      
+      return featureArray;
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
   } catch (error) {
-    console.warn("AI feature extraction failed, falling back to perceptual hash:", error);
+    console.warn("AI 特徵提取失敗，回退到感知哈希:", error);
     return null;
   }
 };
@@ -236,48 +460,93 @@ export const groupSimilarPhotos = async (
   return groups;
 };
 
-// 多階段相似度分組：先用 pHash，再用深度特徵
-export const groupSimilarPhotosAdvanced = async (
-  photos: { id: string; file: File; hash?: string; quality?: ImageQuality }[],
-  pHashThreshold: number = 80,
-  featureThreshold: number = 0.9
+// 改進的多階段相似度分組：顏色直方圖 -> pHash/dHash -> 深度特徵
+export const groupSimilarPhotosMultiStage = async (
+  photos: { id: string; file: File; hashes?: HashResult; quality?: ImageQuality }[],
+  thresholds = { histogram: 0.85, hash: 85, feature: 0.9 }
 ): Promise<SimilarityGroup[]> => {
   const groups: SimilarityGroup[] = [];
   const processed = new Set<string>();
-  // 預先計算所有特徵向量
-  const featureMap: Record<string, number[] | null> = {};
-
+  
+  // 預先計算特徵
+  const histograms: Record<string, number[]> = {};
+  const features: Record<string, number[] | null> = {};
+  
+  // 使用局部敏感哈希進行初步索引
+  const lshIndex = new LSHIndex(64, 4);
+  
+  console.log('開始構建 LSH 索引...');
+  // 構建 LSH 索引
+  for (const photo of photos) {
+    if (photo.hashes?.pHash) {
+      lshIndex.addPhoto(photo.id, photo.hashes.pHash);
+    }
+  }
+  
+  console.log('開始分析相似照片...');
   for (let i = 0; i < photos.length; i++) {
-    if (processed.has(photos[i].id)) continue;
+    if (processed.has(photos[i].id) || !photos[i].hashes?.pHash) continue;
+    
     const currentGroup: string[] = [photos[i].id];
     processed.add(photos[i].id);
-    // 先找 pHash 相近的
-    for (let j = i + 1; j < photos.length; j++) {
-      if (processed.has(photos[j].id)) continue;
-      if (photos[i].hash && photos[j].hash) {
-        const similarity = calculateSimilarity(photos[i].hash, photos[j].hash);
-        if (similarity >= pHashThreshold) {
-          // 進行深度特徵比對
-          if (!featureMap[photos[i].id]) {
-            const features = await extractImageFeatures(photos[i].file);
-            featureMap[photos[i].id] = Array.isArray(features) ? features.flat(Infinity) : null;
-          }
-          if (!featureMap[photos[j].id]) {
-            const features = await extractImageFeatures(photos[j].file);
-            featureMap[photos[j].id] = Array.isArray(features) ? features.flat(Infinity) : null;
-          }
-          const vecA = featureMap[photos[i].id];
-          const vecB = featureMap[photos[j].id];
-          if (vecA && vecB) {
-            const featureSim = cosineSimilarity(vecA, vecB);
-            if (featureSim >= featureThreshold) {
-              currentGroup.push(photos[j].id);
-              processed.add(photos[j].id);
+    
+    // 使用 LSH 獲取可能的候選項，減少比較次數
+    const candidates = lshIndex.query(photos[i].hashes.pHash)
+      .filter(id => !processed.has(id) && id !== photos[i].id);
+    
+    for (const candidateId of candidates) {
+      const candidateIdx = photos.findIndex(p => p.id === candidateId);
+      if (candidateIdx === -1) continue;
+      
+      const candidate = photos[candidateIdx];
+      if (!candidate.hashes) continue;
+      
+      // 階段 1: 計算哈希相似度（加權組合所有哈希）
+      const hashSimilarity = calculateWeightedSimilarity(
+        photos[i].hashes,
+        candidate.hashes
+      );
+      
+      if (hashSimilarity >= thresholds.hash) {
+        // 階段 2: 進一步比較顏色直方圖
+        if (!histograms[photos[i].id]) {
+          histograms[photos[i].id] = await calculateColorHistogram(photos[i].file);
+        }
+        if (!histograms[candidateId]) {
+          histograms[candidateId] = await calculateColorHistogram(candidate.file);
+        }
+        
+        const histogramSimilarity = cosineSimilarity(
+          histograms[photos[i].id], 
+          histograms[candidateId]
+        );
+        
+        if (histogramSimilarity >= thresholds.histogram) {
+          // 階段 3: 最後使用深度特徵比對（如果可用）
+          if (thresholds.feature > 0) {
+            if (!features[photos[i].id]) {
+              features[photos[i].id] = await extractImageFeatures(photos[i].file);
             }
+            if (!features[candidateId]) {
+              features[candidateId] = await extractImageFeatures(candidate.file);
+            }
+            
+            const vecA = features[photos[i].id];
+            const vecB = features[candidateId];
+            
+            if (vecA && vecB && cosineSimilarity(vecA, vecB) >= thresholds.feature) {
+              currentGroup.push(candidateId);
+              processed.add(candidateId);
+            }
+          } else {
+            // 如果不使用深度特徵，僅基於哈希和直方圖相似度決定
+            currentGroup.push(candidateId);
+            processed.add(candidateId);
           }
         }
       }
     }
+    
     if (currentGroup.length > 1) {
       // 找出品質最好的照片
       const groupPhotos = photos.filter(p => currentGroup.includes(p.id));
@@ -286,13 +555,15 @@ export const groupSimilarPhotosAdvanced = async (
         const currentScore = current.quality?.score || 0;
         return currentScore > bestScore ? current : best;
       });
+      
       groups.push({
         id: Math.random().toString(36).substr(2, 9),
         photos: currentGroup,
         bestPhoto: bestPhoto.id,
-        averageSimilarity: pHashThreshold
+        averageSimilarity: thresholds.hash
       });
     }
   }
+  
   return groups;
 }

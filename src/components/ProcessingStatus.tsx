@@ -1,129 +1,103 @@
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, Circle, Loader2 } from "lucide-react";
-
-interface ProcessingStep {
-  name: string;
-  status: 'pending' | 'processing' | 'completed';
-  progress: number;
-}
+import { Button } from "@/components/ui/button";
+import { AlertCircle, CheckCircle, Loader2, Timer } from "lucide-react";
+import { ProcessingStep } from "@/lib/types";
 
 interface ProcessingStatusProps {
   steps: ProcessingStep[];
   currentStep: number;
+  onCancel?: () => void;
 }
 
-export const ProcessingStatus = ({ steps, currentStep }: ProcessingStatusProps) => {
-  const getStepIcon = (step: ProcessingStep, index: number) => {
-    if (step.status === 'completed') {
-      return <CheckCircle className="w-5 h-5 text-success" />;
-    } else if (step.status === 'processing') {
-      return <Loader2 className="w-5 h-5 text-primary animate-spin" />;
-    }
-    return <Circle className="w-5 h-5 text-muted-foreground" />;
-  };
-
-  const getStepBadge = (step: ProcessingStep) => {
-    switch (step.status) {
-      case 'completed':
-        return <Badge variant="default" className="bg-success">完成</Badge>;
-      case 'processing':
-        return <Badge variant="default">處理中</Badge>;
-      default:
-        return <Badge variant="secondary">等待中</Badge>;
-    }
-  };
-
-  const overallProgress = steps.reduce((acc, step) => acc + step.progress, 0) / steps.length;
+export const ProcessingStatus = ({ steps, currentStep, onCancel }: ProcessingStatusProps) => {
+  // 計算總進度百分比
+  const totalProgress = steps.reduce(
+    (acc, step, index) => acc + step.progress / steps.length,
+    0
+  );
 
   return (
-    <Card className="p-6 bg-gradient-subtle">
+    <Card className="p-6">
       <div className="space-y-6">
-        {/* Header */}
-        <div className="text-center space-y-2">
-          <h3 className="text-lg font-semibold">正在處理照片...</h3>
-          <p className="text-sm text-muted-foreground">
-            請稍候，系統正在分析並整理您的照片
-          </p>
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">處理中，請稍候...</h3>
+          <Badge variant="secondary">
+            <Timer className="w-3 h-3 mr-1" />
+            {Math.round(totalProgress)}% 完成
+          </Badge>
         </div>
 
-        {/* Overall Progress */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-medium">整體進度</span>
-            <span className="text-muted-foreground">{Math.round(overallProgress)}%</span>
-          </div>
-          <Progress value={overallProgress} className="h-2" />
-        </div>
+        <Progress value={totalProgress} className="h-2" />
 
-        {/* Step Details */}
         <div className="space-y-4">
           {steps.map((step, index) => (
             <div
               key={index}
-              className={`
-                flex items-center space-x-4 p-4 rounded-lg transition-all duration-200
-                ${step.status === 'processing' 
-                  ? 'bg-photo-hover border border-primary/20' 
-                  : step.status === 'completed'
-                  ? 'bg-success/5 border border-success/20'
-                  : 'bg-muted/30'
-                }
-              `}
+              className={`flex items-center justify-between ${
+                index === currentStep ? "font-medium" : "text-muted-foreground"
+              }`}
             >
-              {/* Step Icon */}
-              <div className="flex-shrink-0">
-                {getStepIcon(step, index)}
-              </div>
-
-              {/* Step Info */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="font-medium text-sm">{step.name}</h4>
-                  {getStepBadge(step)}
-                </div>
-                
-                {/* Step Progress */}
-                {step.status !== 'pending' && (
-                  <div className="space-y-1">
-                    <Progress 
-                      value={step.progress} 
-                      className={`h-1.5 ${
-                        step.status === 'completed' 
-                          ? '[&>div]:bg-success' 
-                          : step.status === 'processing'
-                          ? '[&>div]:bg-gradient-processing'
-                          : ''
-                      }`}
-                    />
-                    <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>
-                        {step.status === 'processing' && currentStep === index
-                          ? '正在處理...'
-                          : step.status === 'completed'
-                          ? '已完成'
-                          : '等待中'
-                        }
-                      </span>
-                      <span>{step.progress}%</span>
-                    </div>
-                  </div>
+              <div className="flex items-center gap-2">
+                {step.status === "pending" && (
+                  <div className="w-5 h-5 rounded-full border-2 border-muted flex-shrink-0" />
+                )}
+                {step.status === "processing" && (
+                  <Loader2 className="w-5 h-5 text-primary animate-spin flex-shrink-0" />
+                )}
+                {step.status === "completed" && (
+                  <CheckCircle className="w-5 h-5 text-primary flex-shrink-0" />
+                )}
+                {step.status === "error" && (
+                  <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0" />
+                )}
+                <span>{step.name}</span>
+                {step.error && (
+                  <Badge variant="destructive" className="text-xs ml-2">
+                    錯誤
+                  </Badge>
                 )}
               </div>
+              <Progress
+                value={step.progress}
+                className={`h-1.5 w-32 ${
+                  step.status === "error" ? "bg-destructive/20" : ""
+                }`}
+              />
             </div>
           ))}
         </div>
 
-        {/* Processing Animation */}
-        <div className="flex items-center justify-center space-x-2 text-sm text-muted-foreground">
-          <div className="flex space-x-1">
-            <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-            <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-            <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+        {/* 錯誤訊息顯示區域 */}
+        {steps.some(step => step.status === "error") && (
+          <div className="mt-4 p-3 border border-destructive/30 rounded bg-destructive/10 text-sm text-destructive">
+            <p className="font-medium">處理過程中發生錯誤：</p>
+            <ul className="mt-1 list-disc list-inside">
+              {steps
+                .filter(step => step.status === "error" && step.error)
+                .map((step, index) => (
+                  <li key={index}>{step.error}</li>
+                ))}
+            </ul>
+            <p className="mt-2">
+              您可以嘗試取消操作，然後重新開始處理。
+            </p>
           </div>
-          <span>AI 正在努力工作中</span>
-        </div>
+        )}
+        
+        {/* 取消按鈕 */}
+        {onCancel && (
+          <div className="flex justify-end mt-4">
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={onCancel}
+            >
+              取消處理
+            </Button>
+          </div>
+        )}
       </div>
     </Card>
   );
