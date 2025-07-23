@@ -17,7 +17,7 @@ import {
   cosineSimilarity
 } from "./utils";
 import { hashCache } from "./hashCacheService";
-import ImageWorker from "./imageWorker.ts?worker";
+import ImageWorker from "./imageWorker.ts?worker&inline";
 
 // 工作者池管理
 const MAX_WORKERS = 4;
