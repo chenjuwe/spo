@@ -44,10 +44,15 @@
     --photo-bg: 0 0% 97%;
     --photo-border: 0 0% 90%;
     --photo-hover: 213 84% 96%;
+    --photo-selected: 213 84% 48%;
+    --photo-quality-high: 142 69% 45%;
+    --photo-quality-medium: 38 92% 50%;
+    --photo-quality-low: 0 72% 51%;
 
     --gradient-primary: linear-gradient(135deg, hsl(213 84% 48%), hsl(213 84% 58%));
     --gradient-subtle: linear-gradient(180deg, hsl(0 0% 100%), hsl(210 40% 98%));
     --gradient-processing: linear-gradient(90deg, hsl(213 84% 48%), hsl(184 77% 52%));
+    --gradient-quality: linear-gradient(135deg, hsl(142 69% 45%), hsl(38 92% 50%), hsl(0 72% 51%));
 
     --shadow-photo: 0 4px 12px -2px hsl(213 84% 48% / 0.1);
     --shadow-card: 0 2px 8px -2px hsl(210 11% 15% / 0.08);

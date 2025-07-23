@@ -9,12 +9,31 @@ interface SettingsPanelProps {
   similarityThreshold: number;
   onSimilarityThresholdChange: (value: number) => void;
   onClose: () => void;
+  settings?: {
+    autoRename: boolean;
+    preserveOriginal: boolean;
+    optimizeQuality: boolean;
+    maxDimension: number;
+  };
+  onSettingsChange?: (settings: {
+    autoRename: boolean;
+    preserveOriginal: boolean;
+    optimizeQuality: boolean;
+    maxDimension: number;
+  }) => void;
 }
 
 export const SettingsPanel = ({
   similarityThreshold,
   onSimilarityThresholdChange,
-  onClose
+  onClose,
+  settings = {
+    autoRename: true,
+    preserveOriginal: true,
+    optimizeQuality: false,
+    maxDimension: 1920
+  },
+  onSettingsChange
 }: SettingsPanelProps) => {
   return (
     <Card className="p-6 bg-gradient-subtle border-l-4 border-l-primary">
@@ -85,7 +104,12 @@ export const SettingsPanel = ({
                   使用標準化格式重新命名檔案
                 </p>
               </div>
-              <Switch defaultChecked />
+              <Switch 
+                checked={settings.autoRename}
+                onCheckedChange={(checked) => 
+                  onSettingsChange?.({ ...settings, autoRename: checked })
+                }
+              />
             </div>
 
             {/* Preserve Original */}
@@ -96,7 +120,12 @@ export const SettingsPanel = ({
                   在刪除前備份原始檔案到安全位置
                 </p>
               </div>
-              <Switch defaultChecked />
+              <Switch 
+                checked={settings.preserveOriginal}
+                onCheckedChange={(checked) => 
+                  onSettingsChange?.({ ...settings, preserveOriginal: checked })
+                }
+              />
             </div>
 
             {/* Quality Optimization */}
@@ -107,7 +136,37 @@ export const SettingsPanel = ({
                   自動調整亮度、對比度和銳化
                 </p>
               </div>
-              <Switch />
+              <Switch 
+                checked={settings.optimizeQuality}
+                onCheckedChange={(checked) => 
+                  onSettingsChange?.({ ...settings, optimizeQuality: checked })
+                }
+              />
+            </div>
+
+            {/* Max Dimension */}
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-sm">最大尺寸限制</Label>
+                <p className="text-xs text-muted-foreground">
+                  調整照片最長邊的像素大小（保持比例）
+                </p>
+              </div>
+              <Slider
+                value={[settings.maxDimension]}
+                onValueChange={(value) => 
+                  onSettingsChange?.({ ...settings, maxDimension: value[0] })
+                }
+                max={4000}
+                min={800}
+                step={100}
+                className="w-full"
+              />
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>800px</span>
+                <span className="font-medium text-primary">{settings.maxDimension}px</span>
+                <span>4000px</span>
+              </div>
             </div>
           </div>
         </div>

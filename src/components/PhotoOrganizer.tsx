@@ -8,7 +8,14 @@ import { Upload, FolderOpen, Image, Settings, Play, CheckCircle } from "lucide-r
 import { PhotoGrid } from "./PhotoGrid";
 import { ProcessingStatus } from "./ProcessingStatus";
 import { SettingsPanel } from "./SettingsPanel";
+import { ResultsView } from "./ResultsView";
 import { toast } from "sonner";
+import { 
+  calculatePerceptualHash, 
+  analyzeImageQuality, 
+  groupSimilarPhotos 
+} from "@/lib/imageAnalysis";
+import { downloadOrganizedFiles } from "@/lib/fileOrganizer";
 
 interface PhotoFile {
   file: File;
@@ -17,6 +24,21 @@ interface PhotoFile {
   similarity?: number;
   isSelected?: boolean;
   group?: string;
+  quality?: {
+    sharpness: number;
+    brightness: number;
+    contrast: number;
+    score: number;
+  };
+  hash?: string;
+  path?: string;
+}
+
+interface SimilarityGroup {
+  id: string;
+  photos: string[];
+  bestPhoto: string;
+  averageSimilarity: number;
 }
 
 interface ProcessingStep {
@@ -29,14 +51,23 @@ export const PhotoOrganizer = () => {
   const [photos, setPhotos] = useState<PhotoFile[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showResults, setShowResults] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [similarityThreshold, setSimilarityThreshold] = useState(90);
+  const [similarityGroups, setSimilarityGroups] = useState<SimilarityGroup[]>([]);
+  const [settings, setSettings] = useState({
+    autoRename: true,
+    preserveOriginal: true,
+    optimizeQuality: false,
+    maxDimension: 1920
+  });
   
   const [processingSteps, setProcessingSteps] = useState<ProcessingStep[]>([
-    { name: "載入照片", status: 'pending', progress: 0 },
+    { name: "分析照片品質", status: 'pending', progress: 0 },
+    { name: "計算感知哈希", status: 'pending', progress: 0 },
     { name: "分析相似性", status: 'pending', progress: 0 },
     { name: "挑選最佳照片", status: 'pending', progress: 0 },
-    { name: "整理檔案", status: 'pending', progress: 0 }
+    { name: "準備下載檔案", status: 'pending', progress: 0 }
   ]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -53,7 +84,8 @@ export const PhotoOrganizer = () => {
       file,
       preview: URL.createObjectURL(file),
       id: Math.random().toString(36).substr(2, 9),
-      isSelected: false
+      isSelected: false,
+      path: (file as any).webkitRelativePath || file.name
     }));
 
     setPhotos(prev => [...prev, ...newPhotos]);
@@ -95,38 +127,134 @@ export const PhotoOrganizer = () => {
     setIsProcessing(true);
     setCurrentStep(0);
 
-    // 模擬處理步驟
-    for (let i = 0; i < processingSteps.length; i++) {
-      setCurrentStep(i);
-      
+    try {
+      const processedPhotos = [...photos];
+
+      // 步驟 1: 分析照片品質
+      setCurrentStep(0);
       setProcessingSteps(prev => prev.map((step, index) => ({
         ...step,
-        status: index === i ? 'processing' : index < i ? 'completed' : 'pending'
+        status: index === 0 ? 'processing' : 'pending'
       })));
 
-      // 模擬進度更新
-      for (let progress = 0; progress <= 100; progress += 10) {
+      for (let i = 0; i < processedPhotos.length; i++) {
+        const quality = await analyzeImageQuality(processedPhotos[i].file);
+        processedPhotos[i].quality = quality;
+        
+        const progress = Math.round(((i + 1) / processedPhotos.length) * 100);
         setProcessingSteps(prev => prev.map((step, index) => ({
           ...step,
-          progress: index === i ? progress : step.progress
+          progress: index === 0 ? progress : step.progress
         })));
-        await new Promise(resolve => setTimeout(resolve, 200));
       }
 
       setProcessingSteps(prev => prev.map((step, index) => ({
         ...step,
-        status: index <= i ? 'completed' : 'pending',
-        progress: index <= i ? 100 : 0
+        status: index === 0 ? 'completed' : step.status
       })));
-    }
 
-    setIsProcessing(false);
-    toast.success("照片整理完成！");
+      // 步驟 2: 計算感知哈希
+      setCurrentStep(1);
+      setProcessingSteps(prev => prev.map((step, index) => ({
+        ...step,
+        status: index === 1 ? 'processing' : step.status
+      })));
+
+      for (let i = 0; i < processedPhotos.length; i++) {
+        const hash = await calculatePerceptualHash(processedPhotos[i].file);
+        processedPhotos[i].hash = hash;
+        
+        const progress = Math.round(((i + 1) / processedPhotos.length) * 100);
+        setProcessingSteps(prev => prev.map((step, index) => ({
+          ...step,
+          progress: index === 1 ? progress : step.progress
+        })));
+      }
+
+      setProcessingSteps(prev => prev.map((step, index) => ({
+        ...step,
+        status: index === 1 ? 'completed' : step.status
+      })));
+
+      // 步驟 3: 分析相似性
+      setCurrentStep(2);
+      setProcessingSteps(prev => prev.map((step, index) => ({
+        ...step,
+        status: index === 2 ? 'processing' : step.status
+      })));
+
+      const groups = await groupSimilarPhotos(processedPhotos, similarityThreshold);
+      setSimilarityGroups(groups);
+
+      setProcessingSteps(prev => prev.map((step, index) => ({
+        ...step,
+        status: index === 2 ? 'completed' : step.status,
+        progress: index === 2 ? 100 : step.progress
+      })));
+
+      // 步驟 4: 挑選最佳照片
+      setCurrentStep(3);
+      setProcessingSteps(prev => prev.map((step, index) => ({
+        ...step,
+        status: index === 3 ? 'processing' : step.status
+      })));
+
+      // 標記分組照片
+      for (const group of groups) {
+        for (const photoId of group.photos) {
+          const photoIndex = processedPhotos.findIndex(p => p.id === photoId);
+          if (photoIndex !== -1) {
+            processedPhotos[photoIndex].group = group.id;
+          }
+        }
+      }
+
+      setProcessingSteps(prev => prev.map((step, index) => ({
+        ...step,
+        status: index === 3 ? 'completed' : step.status,
+        progress: index === 3 ? 100 : step.progress
+      })));
+
+      // 步驟 5: 準備下載檔案
+      setCurrentStep(4);
+      setProcessingSteps(prev => prev.map((step, index) => ({
+        ...step,
+        status: index === 4 ? 'processing' : step.status
+      })));
+
+      // 模擬準備時間
+      for (let progress = 0; progress <= 100; progress += 20) {
+        setProcessingSteps(prev => prev.map((step, index) => ({
+          ...step,
+          progress: index === 4 ? progress : step.progress
+        })));
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+
+      setProcessingSteps(prev => prev.map((step, index) => ({
+        ...step,
+        status: index === 4 ? 'completed' : step.status
+      })));
+
+      setPhotos(processedPhotos);
+      setIsProcessing(false);
+      setShowResults(true);
+      
+      const duplicateCount = groups.reduce((sum, group) => sum + group.photos.length - 1, 0);
+      toast.success(`處理完成！找到 ${groups.length} 個重複分組，將移除 ${duplicateCount} 張重複照片`);
+      
+    } catch (error) {
+      console.error("處理照片時發生錯誤:", error);
+      toast.error("處理照片時發生錯誤，請重試");
+      setIsProcessing(false);
+    }
   };
 
   const clearPhotos = () => {
     photos.forEach(photo => URL.revokeObjectURL(photo.preview));
     setPhotos([]);
+    setSimilarityGroups([]);
+    setShowResults(false);
     setProcessingSteps(prev => prev.map(step => ({
       ...step,
       status: 'pending',
@@ -134,6 +262,50 @@ export const PhotoOrganizer = () => {
     })));
     toast.success("已清除所有照片");
   };
+
+  const handleDownload = async () => {
+    try {
+      await downloadOrganizedFiles(photos, similarityGroups, {
+        autoRename: settings.autoRename,
+        preserveOriginal: settings.preserveOriginal,
+        maxDimension: settings.maxDimension,
+        optimizeQuality: settings.optimizeQuality
+      });
+      toast.success("檔案下載開始！");
+    } catch (error) {
+      console.error("下載檔案時發生錯誤:", error);
+      toast.error("下載檔案時發生錯誤");
+    }
+  };
+
+  const handleBackToEdit = () => {
+    setShowResults(false);
+  };
+
+  // 如果顯示結果頁面
+  if (showResults) {
+    return (
+      <div className="min-h-screen bg-gradient-subtle p-6">
+        <div className="max-w-7xl mx-auto space-y-6">
+          <div className="text-center space-y-2">
+            <h1 className="text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+              Smart Photo Organizer
+            </h1>
+            <p className="text-muted-foreground text-lg">
+              照片整理結果
+            </p>
+          </div>
+          
+          <ResultsView 
+            photos={photos}
+            groups={similarityGroups}
+            onDownload={handleDownload}
+            onBack={handleBackToEdit}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-subtle p-6">
@@ -187,6 +359,8 @@ export const PhotoOrganizer = () => {
             similarityThreshold={similarityThreshold}
             onSimilarityThresholdChange={setSimilarityThreshold}
             onClose={() => setShowSettings(false)}
+            settings={settings}
+            onSettingsChange={setSettings}
           />
         )}
 

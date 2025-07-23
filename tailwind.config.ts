@@ -64,7 +64,13 @@ export default {
 				photo: {
 					bg: 'hsl(var(--photo-bg))',
 					border: 'hsl(var(--photo-border))',
-					hover: 'hsl(var(--photo-hover))'
+					hover: 'hsl(var(--photo-hover))',
+					selected: 'hsl(var(--photo-selected))',
+					quality: {
+						high: 'hsl(var(--photo-quality-high))',
+						medium: 'hsl(var(--photo-quality-medium))',
+						low: 'hsl(var(--photo-quality-low))'
+					}
 				},
 				sidebar: {
 					DEFAULT: 'hsl(var(--sidebar-background))',
@@ -80,7 +86,8 @@ export default {
 			backgroundImage: {
 				'gradient-primary': 'var(--gradient-primary)',
 				'gradient-subtle': 'var(--gradient-subtle)',
-				'gradient-processing': 'var(--gradient-processing)'
+				'gradient-processing': 'var(--gradient-processing)',
+				'gradient-quality': 'var(--gradient-quality)'
 			},
 			boxShadow: {
 				'photo': 'var(--shadow-photo)',
