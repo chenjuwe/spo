@@ -12,6 +12,12 @@ interface PhotoFile {
   similarity?: number;
   isSelected?: boolean;
   group?: string;
+  quality?: {
+    sharpness: number;
+    brightness: number;
+    contrast: number;
+    score: number;
+  };
 }
 
 interface PhotoGridProps {
@@ -19,7 +25,7 @@ interface PhotoGridProps {
   onPhotosChange: (photos: PhotoFile[]) => void;
 }
 
-export const PhotoGrid = ({ photos, onPhotosChange }: PhotoGridProps) => {
+const PhotoGrid = ({ photos, onPhotosChange }: PhotoGridProps) => {
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
   const handleRemovePhoto = (id: string) => {
@@ -210,3 +216,5 @@ export const PhotoGrid = ({ photos, onPhotosChange }: PhotoGridProps) => {
     </div>
   );
 };
+
+export default PhotoGrid;

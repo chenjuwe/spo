@@ -1,4 +1,6 @@
-# Welcome to your Lovable project
+# spo
+
+版本：v0.1.0
 
 ## Project info
 

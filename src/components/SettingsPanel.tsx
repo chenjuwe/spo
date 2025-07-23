@@ -23,18 +23,7 @@ interface SettingsPanelProps {
   }) => void;
 }
 
-export const SettingsPanel = ({
-  similarityThreshold,
-  onSimilarityThresholdChange,
-  onClose,
-  settings = {
-    autoRename: true,
-    preserveOriginal: true,
-    optimizeQuality: false,
-    maxDimension: 1920
-  },
-  onSettingsChange
-}: SettingsPanelProps) => {
+const SettingsPanel = (props: SettingsPanelProps) => {
   return (
     <Card className="p-6 bg-gradient-subtle border-l-4 border-l-primary">
       <div className="space-y-6">
@@ -44,7 +33,7 @@ export const SettingsPanel = ({
             <Settings className="w-5 h-5 text-primary" />
             <h3 className="text-lg font-semibold">處理設定</h3>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <Button variant="ghost" size="sm" onClick={props.onClose}>
             <X className="w-4 h-4" />
           </Button>
         </div>
@@ -63,8 +52,8 @@ export const SettingsPanel = ({
           
           <div className="space-y-3">
             <Slider
-              value={[similarityThreshold]}
-              onValueChange={(value) => onSimilarityThresholdChange(value[0])}
+              value={[props.similarityThreshold]}
+              onValueChange={(value) => props.onSimilarityThresholdChange(value[0])}
               max={100}
               min={50}
               step={1}
@@ -72,20 +61,20 @@ export const SettingsPanel = ({
             />
             <div className="flex items-center justify-between text-sm text-muted-foreground">
               <span>50% (較寬鬆)</span>
-              <span className="font-medium text-primary">{similarityThreshold}%</span>
+              <span className="font-medium text-primary">{props.similarityThreshold}%</span>
               <span>100% (非常嚴格)</span>
             </div>
           </div>
 
           {/* Threshold Guide */}
           <div className="grid grid-cols-3 gap-2 text-xs">
-            <div className={`p-2 rounded text-center ${similarityThreshold <= 70 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
+            <div className={`p-2 rounded text-center ${props.similarityThreshold <= 70 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
               50-70%<br />寬鬆模式
             </div>
-            <div className={`p-2 rounded text-center ${similarityThreshold > 70 && similarityThreshold <= 90 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
+            <div className={`p-2 rounded text-center ${props.similarityThreshold > 70 && props.similarityThreshold <= 90 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
               70-90%<br />標準模式
             </div>
-            <div className={`p-2 rounded text-center ${similarityThreshold > 90 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
+            <div className={`p-2 rounded text-center ${props.similarityThreshold > 90 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
               90-100%<br />嚴格模式
             </div>
           </div>
@@ -105,9 +94,9 @@ export const SettingsPanel = ({
                 </p>
               </div>
               <Switch 
-                checked={settings.autoRename}
+                checked={props.settings?.autoRename}
                 onCheckedChange={(checked) => 
-                  onSettingsChange?.({ ...settings, autoRename: checked })
+                  props.onSettingsChange?.({ ...props.settings, autoRename: checked })
                 }
               />
             </div>
@@ -121,9 +110,9 @@ export const SettingsPanel = ({
                 </p>
               </div>
               <Switch 
-                checked={settings.preserveOriginal}
+                checked={props.settings?.preserveOriginal}
                 onCheckedChange={(checked) => 
-                  onSettingsChange?.({ ...settings, preserveOriginal: checked })
+                  props.onSettingsChange?.({ ...props.settings, preserveOriginal: checked })
                 }
               />
             </div>
@@ -137,9 +126,9 @@ export const SettingsPanel = ({
                 </p>
               </div>
               <Switch 
-                checked={settings.optimizeQuality}
+                checked={props.settings?.optimizeQuality}
                 onCheckedChange={(checked) => 
-                  onSettingsChange?.({ ...settings, optimizeQuality: checked })
+                  props.onSettingsChange?.({ ...props.settings, optimizeQuality: checked })
                 }
               />
             </div>
@@ -153,9 +142,9 @@ export const SettingsPanel = ({
                 </p>
               </div>
               <Slider
-                value={[settings.maxDimension]}
+                value={[props.settings?.maxDimension]}
                 onValueChange={(value) => 
-                  onSettingsChange?.({ ...settings, maxDimension: value[0] })
+                  props.onSettingsChange?.({ ...props.settings, maxDimension: value[0] })
                 }
                 max={4000}
                 min={800}
@@ -164,7 +153,7 @@ export const SettingsPanel = ({
               />
               <div className="flex items-center justify-between text-sm text-muted-foreground">
                 <span>800px</span>
-                <span className="font-medium text-primary">{settings.maxDimension}px</span>
+                <span className="font-medium text-primary">{props.settings?.maxDimension}px</span>
                 <span>4000px</span>
               </div>
             </div>
@@ -173,7 +162,7 @@ export const SettingsPanel = ({
 
         {/* Action Buttons */}
         <div className="flex items-center space-x-2 pt-4">
-          <Button variant="outline" size="sm" onClick={onClose} className="flex-1">
+          <Button variant="outline" size="sm" onClick={props.onClose} className="flex-1">
             取消
           </Button>
           <Button size="sm" className="flex-1">
@@ -184,3 +173,5 @@ export const SettingsPanel = ({
     </Card>
   );
 };
+
+export default SettingsPanel;

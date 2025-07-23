@@ -67,6 +67,14 @@ export const calculateSimilarity = (hash1: string, hash2: string): number => {
   return ((hash1.length - differences) / hash1.length) * 100;
 };
 
+// 計算兩個向量的餘弦相似度
+function cosineSimilarity(vecA: number[], vecB: number[]): number {
+  const dot = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+  const normA = Math.sqrt(vecA.reduce((sum, a) => sum + a * a, 0));
+  const normB = Math.sqrt(vecB.reduce((sum, b) => sum + b * b, 0));
+  return dot / (normA * normB);
+}
+
 // 分析圖片品質
 export const analyzeImageQuality = async (imageFile: File): Promise<ImageQuality> => {
   return new Promise((resolve) => {
@@ -227,3 +235,64 @@ export const groupSimilarPhotos = async (
   
   return groups;
 };
+
+// 多階段相似度分組：先用 pHash，再用深度特徵
+export const groupSimilarPhotosAdvanced = async (
+  photos: { id: string; file: File; hash?: string; quality?: ImageQuality }[],
+  pHashThreshold: number = 80,
+  featureThreshold: number = 0.9
+): Promise<SimilarityGroup[]> => {
+  const groups: SimilarityGroup[] = [];
+  const processed = new Set<string>();
+  // 預先計算所有特徵向量
+  const featureMap: Record<string, number[] | null> = {};
+
+  for (let i = 0; i < photos.length; i++) {
+    if (processed.has(photos[i].id)) continue;
+    const currentGroup: string[] = [photos[i].id];
+    processed.add(photos[i].id);
+    // 先找 pHash 相近的
+    for (let j = i + 1; j < photos.length; j++) {
+      if (processed.has(photos[j].id)) continue;
+      if (photos[i].hash && photos[j].hash) {
+        const similarity = calculateSimilarity(photos[i].hash, photos[j].hash);
+        if (similarity >= pHashThreshold) {
+          // 進行深度特徵比對
+          if (!featureMap[photos[i].id]) {
+            const features = await extractImageFeatures(photos[i].file);
+            featureMap[photos[i].id] = Array.isArray(features) ? features.flat(Infinity) : null;
+          }
+          if (!featureMap[photos[j].id]) {
+            const features = await extractImageFeatures(photos[j].file);
+            featureMap[photos[j].id] = Array.isArray(features) ? features.flat(Infinity) : null;
+          }
+          const vecA = featureMap[photos[i].id];
+          const vecB = featureMap[photos[j].id];
+          if (vecA && vecB) {
+            const featureSim = cosineSimilarity(vecA, vecB);
+            if (featureSim >= featureThreshold) {
+              currentGroup.push(photos[j].id);
+              processed.add(photos[j].id);
+            }
+          }
+        }
+      }
+    }
+    if (currentGroup.length > 1) {
+      // 找出品質最好的照片
+      const groupPhotos = photos.filter(p => currentGroup.includes(p.id));
+      const bestPhoto = groupPhotos.reduce((best, current) => {
+        const bestScore = best.quality?.score || 0;
+        const currentScore = current.quality?.score || 0;
+        return currentScore > bestScore ? current : best;
+      });
+      groups.push({
+        id: Math.random().toString(36).substr(2, 9),
+        photos: currentGroup,
+        bestPhoto: bestPhoto.id,
+        averageSimilarity: pHashThreshold
+      });
+    }
+  }
+  return groups;
+}

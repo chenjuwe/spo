@@ -1,14 +1,11 @@
-import { useState, useCallback } from "react";
+import { Suspense, lazy, useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Upload, FolderOpen, Image, Settings, Play, CheckCircle } from "lucide-react";
-import { PhotoGrid } from "./PhotoGrid";
 import { ProcessingStatus } from "./ProcessingStatus";
-import { SettingsPanel } from "./SettingsPanel";
-import { ResultsView } from "./ResultsView";
 import { toast } from "sonner";
 import { 
   calculatePerceptualHash, 
@@ -16,6 +13,8 @@ import {
   groupSimilarPhotos 
 } from "@/lib/imageAnalysis";
 import { downloadOrganizedFiles } from "@/lib/fileOrganizer";
+import ImageWorker from "@/lib/imageWorker.ts?worker";
+import heic2any from "heic2any";
 
 interface PhotoFile {
   file: File;
@@ -47,7 +46,12 @@ interface ProcessingStep {
   progress: number;
 }
 
-export const PhotoOrganizer = () => {
+// 動態載入大型元件
+const PhotoGrid = lazy(() => import("./PhotoGrid"));
+const SettingsPanel = lazy(() => import("./SettingsPanel"));
+const ResultsView = lazy(() => import("./ResultsView"));
+
+const PhotoOrganizer = () => {
   const [photos, setPhotos] = useState<PhotoFile[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -70,16 +74,31 @@ export const PhotoOrganizer = () => {
     { name: "準備下載檔案", status: 'pending', progress: 0 }
   ]);
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    const imageFiles = acceptedFiles.filter(file => 
-      file.type.startsWith('image/')
-    );
-
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    // 支援 HEIC 轉換
+    const convertedFiles: File[] = [];
+    for (const file of acceptedFiles) {
+      if (file.type === "image/heic" || file.name.toLowerCase().endsWith(".heic")) {
+        try {
+          const blob = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.95 });
+          // heic2any 可能回傳 Blob 或 Blob[]
+          const blobs = Array.isArray(blob) ? blob : [blob];
+          blobs.forEach((b, idx) => {
+            const jpegFile = new File([b], file.name.replace(/\.heic$/i, `.jpg`), { type: "image/jpeg" });
+            convertedFiles.push(jpegFile);
+          });
+        } catch (e) {
+          toast.error(`HEIC 轉換失敗: ${file.name}`);
+        }
+      } else {
+        convertedFiles.push(file);
+      }
+    }
+    const imageFiles = convertedFiles.filter(file => file.type.startsWith('image/'));
     if (imageFiles.length === 0) {
       toast.error("請選擇圖片檔案");
       return;
     }
-
     const newPhotos: PhotoFile[] = imageFiles.map(file => ({
       file,
       preview: URL.createObjectURL(file),
@@ -87,7 +106,6 @@ export const PhotoOrganizer = () => {
       isSelected: false,
       path: (file as any).webkitRelativePath || file.name
     }));
-
     setPhotos(prev => [...prev, ...newPhotos]);
     toast.success(`已載入 ${imageFiles.length} 張照片`);
   }, []);
@@ -118,6 +136,23 @@ export const PhotoOrganizer = () => {
     input.click();
   };
 
+  const BATCH_SIZE = 5;
+  const worker = new ImageWorker();
+
+  function runWorkerTask(task, file) {
+    return new Promise((resolve) => {
+      const id = Math.random().toString(36).substr(2, 9);
+      const handler = (e) => {
+        if (e.data.id === id) {
+          worker.removeEventListener("message", handler);
+          resolve(e.data.result);
+        }
+      };
+      worker.addEventListener("message", handler);
+      worker.postMessage({ task, file, id });
+    });
+  }
+
   const startProcessing = async () => {
     if (photos.length === 0) {
       toast.error("請先選擇照片");
@@ -130,18 +165,22 @@ export const PhotoOrganizer = () => {
     try {
       const processedPhotos = [...photos];
 
-      // 步驟 1: 分析照片品質
+      // 步驟 1: 分析照片品質（Web Worker 批次並行）
       setCurrentStep(0);
       setProcessingSteps(prev => prev.map((step, index) => ({
         ...step,
         status: index === 0 ? 'processing' : 'pending'
       })));
 
-      for (let i = 0; i < processedPhotos.length; i++) {
-        const quality = await analyzeImageQuality(processedPhotos[i].file);
-        processedPhotos[i].quality = quality;
-        
-        const progress = Math.round(((i + 1) / processedPhotos.length) * 100);
+      for (let i = 0; i < processedPhotos.length; i += BATCH_SIZE) {
+        const batch = processedPhotos.slice(i, i + BATCH_SIZE);
+        const qualities = await Promise.all(
+          batch.map(photo => runWorkerTask('analyzeImageQuality', photo.file))
+        );
+        for (let j = 0; j < batch.length; j++) {
+          batch[j].quality = qualities[j];
+        }
+        const progress = Math.round(((i + batch.length) / processedPhotos.length) * 100);
         setProcessingSteps(prev => prev.map((step, index) => ({
           ...step,
           progress: index === 0 ? progress : step.progress
@@ -153,18 +192,22 @@ export const PhotoOrganizer = () => {
         status: index === 0 ? 'completed' : step.status
       })));
 
-      // 步驟 2: 計算感知哈希
+      // 步驟 2: 計算感知哈希（Web Worker 批次並行）
       setCurrentStep(1);
       setProcessingSteps(prev => prev.map((step, index) => ({
         ...step,
         status: index === 1 ? 'processing' : step.status
       })));
 
-      for (let i = 0; i < processedPhotos.length; i++) {
-        const hash = await calculatePerceptualHash(processedPhotos[i].file);
-        processedPhotos[i].hash = hash;
-        
-        const progress = Math.round(((i + 1) / processedPhotos.length) * 100);
+      for (let i = 0; i < processedPhotos.length; i += BATCH_SIZE) {
+        const batch = processedPhotos.slice(i, i + BATCH_SIZE);
+        const hashes = await Promise.all(
+          batch.map(photo => runWorkerTask('calculatePerceptualHash', photo.file))
+        );
+        for (let j = 0; j < batch.length; j++) {
+          batch[j].hash = hashes[j];
+        }
+        const progress = Math.round(((i + batch.length) / processedPhotos.length) * 100);
         setProcessingSteps(prev => prev.map((step, index) => ({
           ...step,
           progress: index === 1 ? progress : step.progress
@@ -265,6 +308,9 @@ export const PhotoOrganizer = () => {
 
   const handleDownload = async () => {
     try {
+      if (photos.length > 200) {
+        toast.info("照片數量較多，將分批下載多個壓縮檔以避免瀏覽器記憶體不足。請耐心等待所有檔案下載完成。", { duration: 8000 });
+      }
       await downloadOrganizedFiles(photos, similarityGroups, {
         autoRename: settings.autoRename,
         preserveOriginal: settings.preserveOriginal,
@@ -282,6 +328,17 @@ export const PhotoOrganizer = () => {
     setShowResults(false);
   };
 
+  // 元件卸載時釋放所有 preview URL
+  useEffect(() => {
+    return () => {
+      photos.forEach(photo => {
+        try {
+          URL.revokeObjectURL(photo.preview);
+        } catch {}
+      });
+    };
+  }, [photos]);
+
   // 如果顯示結果頁面
   if (showResults) {
     return (
@@ -295,13 +352,14 @@ export const PhotoOrganizer = () => {
               照片整理結果
             </p>
           </div>
-          
+          <Suspense fallback={<div>載入中...</div>}>
           <ResultsView 
             photos={photos}
             groups={similarityGroups}
             onDownload={handleDownload}
             onBack={handleBackToEdit}
           />
+          </Suspense>
         </div>
       </div>
     );
@@ -354,6 +412,7 @@ export const PhotoOrganizer = () => {
         </div>
 
         {/* Settings Panel */}
+        <Suspense fallback={null}>
         {showSettings && (
           <SettingsPanel
             similarityThreshold={similarityThreshold}
@@ -363,6 +422,7 @@ export const PhotoOrganizer = () => {
             onSettingsChange={setSettings}
           />
         )}
+        </Suspense>
 
         {/* Drop Zone */}
         {photos.length === 0 && (
@@ -415,6 +475,7 @@ export const PhotoOrganizer = () => {
         )}
 
         {/* Photo Grid */}
+        <Suspense fallback={null}>
         {photos.length > 0 && (
           <>
             <PhotoGrid photos={photos} onPhotosChange={setPhotos} />
@@ -450,7 +511,10 @@ export const PhotoOrganizer = () => {
             </Card>
           </>
         )}
+        </Suspense>
       </div>
     </div>
   );
 };
+
+export default PhotoOrganizer;

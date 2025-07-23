@@ -343,7 +343,22 @@ export const downloadOrganizedFiles = async (
     optimizeQuality?: boolean;
   } = {}
 ) => {
-  const zipBlob = await organizeAndPackageFiles(photos, groups, options);
-  const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-  saveAs(zipBlob, `organized_photos_${timestamp}.zip`);
+  const BATCH_SIZE = 200;
+  if (photos.length <= BATCH_SIZE) {
+    const zipBlob = await organizeAndPackageFiles(photos, groups, options);
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+    saveAs(zipBlob, `organized_photos_${timestamp}.zip`);
+    return;
+  }
+  // 分批處理
+  let batchIndex = 1;
+  for (let i = 0; i < photos.length; i += BATCH_SIZE) {
+    const batchPhotos = photos.slice(i, i + BATCH_SIZE);
+    // 只取屬於 batchPhotos 的分組
+    const batchGroups = groups.filter(g => g.photos.some(pid => batchPhotos.some(p => p.id === pid)));
+    const zipBlob = await organizeAndPackageFiles(batchPhotos, batchGroups, options);
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+    saveAs(zipBlob, `organized_photos_${timestamp}_part${batchIndex}.zip`);
+    batchIndex++;
+  }
 };

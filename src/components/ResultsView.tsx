@@ -45,7 +45,7 @@ interface ResultsViewProps {
   onBack: () => void;
 }
 
-export const ResultsView = ({ photos, groups, onDownload, onBack }: ResultsViewProps) => {
+const ResultsView = ({ photos, groups, onDownload, onBack }: ResultsViewProps) => {
   const totalPhotos = photos.length;
   const duplicatePhotos = groups.reduce((sum, group) => sum + group.photos.length - 1, 0);
   const keptPhotos = totalPhotos - duplicatePhotos;
@@ -284,3 +284,5 @@ export const ResultsView = ({ photos, groups, onDownload, onBack }: ResultsViewP
     </div>
   );
 };
+
+export default ResultsView;
