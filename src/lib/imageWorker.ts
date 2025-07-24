@@ -48,11 +48,11 @@ self.onmessage = async (e) => {
 // 確保 Worker 可以在不支援 OffscreenCanvas 的瀏覽器中工作
 if (typeof OffscreenCanvas === 'undefined') {
   // 為舊瀏覽器提供 polyfill
-  // @ts-ignore: 添加全局類型定義以避免類型錯誤
+  // @ts-expect-error 在 Worker 中擴展全局物件
   self.OffscreenCanvas = class {
     private _width: number;
     private _height: number;
-    private _canvas: any;
+    private _canvas: Record<string, unknown>;
     
     constructor(width: number, height: number) {
       this._width = width;
@@ -61,7 +61,7 @@ if (typeof OffscreenCanvas === 'undefined') {
       this._canvas = {};
     }
     
-    getContext(type: string): any {
+    getContext(type: string): CanvasRenderingContext2D | null {
       // 在worker中不會實際使用，僅作為類型兼容的橋接
       return null;
     }

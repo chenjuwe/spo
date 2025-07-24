@@ -250,7 +250,7 @@ export const analyzeImageQuality = async (imageFile: File): Promise<ImageQuality
       
       let brightnessSum = 0;
       let contrastSum = 0;
-      let sharpnessSum = 0;
+      const sharpnessSum = 0;
       
       // 計算亮度和對比度
       for (let i = 0; i < pixels.length; i += 4) {
@@ -340,8 +340,17 @@ export const analyzeImageQuality = async (imageFile: File): Promise<ImageQuality
   });
 };
 
+// 定義特徵提取模型類型
+interface FeatureExtractor {
+  (input: string | ArrayBuffer | Uint8Array | Blob, options?: {
+    pooling?: string;
+    normalize?: boolean;
+  }): Promise<number[] | number[][]>;
+}
+
 // 使用AI模型進行圖片特徵提取（增強版）
-const modelCache = new Map<string, any>();
+// 使用泛型類型替代 any
+const modelCache = new Map<string, unknown>();
 export const extractImageFeatures = async (imageFile: File) => {
   // 嘗試從緩存獲取
   const cachedFeatures = await hashCache.getFeatures(imageFile);
@@ -382,7 +391,7 @@ export const extractImageFeatures = async (imageFile: File) => {
     
     const objectUrl = URL.createObjectURL(imageFile);
     try {
-      const features = await extractor(objectUrl, {
+      const features = await (extractor as FeatureExtractor)(objectUrl, {
         pooling: "mean",
         normalize: true
       });

@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState, useEffect, useMemo } from "react";
+import { Suspense, lazy, useState, useEffect, useMemo, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Image, Settings, HelpCircle, KeyboardIcon } from "lucide-react";
@@ -33,6 +33,29 @@ const PhotoOrganizer = () => {
     optimizeQuality: false,
     maxDimension: 1920
   });
+
+  // 定義需要在 useMemo 中使用的函數
+  const clearPhotos = useCallback(() => {
+    photos.forEach(photo => {
+      try {
+        URL.revokeObjectURL(photo.preview);
+      } catch (error) {
+        console.warn('釋放資源失敗:', error);
+      }
+    });
+    setPhotos([]);
+    setSimilarityGroups([]);
+    setShowResults(false);
+    toast.success("已清除所有照片");
+  }, [photos]);
+
+  const handleDownload = useCallback(async () => {
+    try {
+      await downloadManager.downloadOrganizedFiles(photos, similarityGroups, settings);
+    } catch (error) {
+      console.error("下載檔案時發生錯誤:", error);
+    }
+  }, [photos, similarityGroups, settings]);
 
   // 使用 useMemo 避免每次渲染都重新創建 shortcuts 對象
   const shortcuts = useMemo<Record<string, KeyboardShortcut>>(() => ({
@@ -85,7 +108,7 @@ const PhotoOrganizer = () => {
       action: () => downloadManager.cancelDownload(),
       description: "取消下載"
     }
-  }), [photos.length, showSettings, showShortcuts, showResults, similarityGroups.length]);
+  }), [photos.length, showSettings, showShortcuts, showResults, similarityGroups.length, clearPhotos, handleDownload]);
 
   // 快捷鍵分類設置
   const shortcutCategories = useMemo(() => ({
@@ -134,26 +157,6 @@ const PhotoOrganizer = () => {
     setShowResults(true);
   };
 
-  const clearPhotos = () => {
-    photos.forEach(photo => {
-      try {
-        URL.revokeObjectURL(photo.preview);
-      } catch {}
-    });
-    setPhotos([]);
-    setSimilarityGroups([]);
-    setShowResults(false);
-    toast.success("已清除所有照片");
-  };
-
-  const handleDownload = async () => {
-    try {
-      await downloadManager.downloadOrganizedFiles(photos, similarityGroups, settings);
-    } catch (error) {
-      console.error("下載檔案時發生錯誤:", error);
-    }
-  };
-
   const handleBackToEdit = () => {
     setShowResults(false);
   };
@@ -164,10 +167,12 @@ const PhotoOrganizer = () => {
       photos.forEach(photo => {
         try {
           URL.revokeObjectURL(photo.preview);
-        } catch {}
+        } catch (error) {
+          console.warn('釋放資源失敗:', error);
+        }
       });
     };
-  }, []);
+  }, [photos]);
 
   // 如果顯示結果頁面
   if (showResults) {

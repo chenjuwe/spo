@@ -20,7 +20,7 @@ export const PhotoUploader = ({
 }: PhotoUploaderProps) => {
   const [isUploading, setIsUploading] = useState(false);
 
-  const handleFiles = async (acceptedFiles: File[]) => {
+  const handleFiles = useCallback(async (acceptedFiles: File[]) => {
     if (isDisabled || isUploading) return;
     
     try {
@@ -70,7 +70,7 @@ export const PhotoUploader = ({
         preview: URL.createObjectURL(file),
         id: Math.random().toString(36).substr(2, 9),
         isSelected: false,
-        path: (file as any).webkitRelativePath || file.name
+        path: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
       }));
       
       toast.dismiss(progressToast);
@@ -87,11 +87,11 @@ export const PhotoUploader = ({
     } finally {
       setIsUploading(false);
     }
-  };
+  }, [isDisabled, isUploading, onPhotosAdded]);
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     handleFiles(acceptedFiles);
-  }, []);
+  }, [handleFiles]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -126,7 +126,11 @@ export const PhotoUploader = ({
     return (
       <div className="flex flex-col sm:flex-row items-center gap-2">
         <Button
-          onClick={() => getRootProps().onClick?.({} as any)}
+          type="button"
+          onClick={(e) => {
+            const rootProps = getRootProps();
+            if (rootProps.onClick) rootProps.onClick(e);
+          }}
           disabled={isDisabled || isUploading}
           className="w-full sm:w-auto"
         >

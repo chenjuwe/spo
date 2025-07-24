@@ -32,5 +32,8 @@ function Badge({ className, variant, ...props }: BadgeProps) {
     <div className={cn(badgeVariants({ variant }), className)} {...props} />
   )
 }
+Badge.displayName = "Badge"
 
+// 同時支持命名導出和默認導出
 export { Badge, badgeVariants }
+export default Badge

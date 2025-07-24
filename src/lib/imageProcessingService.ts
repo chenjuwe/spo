@@ -104,48 +104,49 @@ export function runWorkerTask<T>(
   file: File,
   options?: ProcessingTaskOptions
 ): Promise<T> {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const worker = await getAvailableWorker();
-      const id = Math.random().toString(36).substr(2, 9);
+  return new Promise((resolve, reject) => {
+    getAvailableWorker()
+      .then(worker => {
+        const id = Math.random().toString(36).substr(2, 9);
       
-      // 設置取消處理
-      const abortController = options?.signal ? 
-        { aborted: false } : 
-        { aborted: false };
-        
-      if (options?.signal) {
-        options.signal.addEventListener('abort', () => {
-          abortController.aborted = true;
-          releaseWorker(worker);
-          reject(new DOMException('操作已取消', 'AbortError'));
-        });
-      }
-      
-      const handler = (e: MessageEvent) => {
-        if (e.data.id === id) {
-          worker.removeEventListener("message", handler);
-          releaseWorker(worker);
+        // 設置取消處理
+        const abortController = options?.signal ? 
+          { aborted: false } : 
+          { aborted: false };
           
-          if (abortController.aborted) {
+        if (options?.signal) {
+          options.signal.addEventListener('abort', () => {
+            abortController.aborted = true;
+            releaseWorker(worker);
             reject(new DOMException('操作已取消', 'AbortError'));
-            return;
-          }
-          
-          if (e.data.error) {
-            reject(new Error(e.data.error));
-            return;
-          }
-          
-          resolve(e.data.result);
+          });
         }
-      };
-      
-      worker.addEventListener("message", handler);
-      worker.postMessage({ task, file, id });
-    } catch (error) {
-      reject(error);
-    }
+        
+        const handler = (e: MessageEvent) => {
+          if (e.data.id === id) {
+            worker.removeEventListener("message", handler);
+            releaseWorker(worker);
+            
+            if (abortController.aborted) {
+              reject(new DOMException('操作已取消', 'AbortError'));
+              return;
+            }
+            
+            if (e.data.error) {
+              reject(new Error(e.data.error));
+              return;
+            }
+            
+            resolve(e.data.result);
+          }
+        };
+        
+        worker.addEventListener("message", handler);
+        worker.postMessage({ task, file, id });
+      })
+      .catch(error => {
+        reject(error);
+      });
   });
 }
 
@@ -558,12 +559,13 @@ export function groupSimilarPhotosWithAdjustment(
   photos: PhotoFile[],
   options?: ProcessingTaskOptions
 ): Promise<SimilarityGroup[]> {
-  return new Promise(async (resolve, reject) => {
+  // 檢查是否已取消
+  if (options?.signal?.aborted) {
+    return Promise.reject(new DOMException('操作已取消', 'AbortError'));
+  }
+  
+  return new Promise((resolve, reject) => {
     try {
-      if (options?.signal?.aborted) {
-        throw new DOMException('操作已取消', 'AbortError');
-      }
-      
       const groups: SimilarityGroup[] = [];
       const processed = new Set<string>();
       

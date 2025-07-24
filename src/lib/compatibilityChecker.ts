@@ -43,16 +43,16 @@ function getBrowserInfo(): CompatibilityResult['browserInfo'] {
   // 檢測瀏覽器
   if (/Edge|Edg/.test(ua)) {
     browserName = "Edge";
-    version = ua.match(/Edge?\/([0-9\.]+)/)?.[1] || version;
+    version = ua.match(/Edge?\/([0-9.]+)/)?.[1] || version;
   } else if (/Chrome/.test(ua)) {
     browserName = "Chrome";
-    version = ua.match(/Chrome\/([0-9\.]+)/)?.[1] || version;
+    version = ua.match(/Chrome\/([0-9.]+)/)?.[1] || version;
   } else if (/Firefox/.test(ua)) {
     browserName = "Firefox";
-    version = ua.match(/Firefox\/([0-9\.]+)/)?.[1] || version;
+    version = ua.match(/Firefox\/([0-9.]+)/)?.[1] || version;
   } else if (/Safari/.test(ua) && !/Chrome/.test(ua)) {
     browserName = "Safari";
-    version = ua.match(/Version\/([0-9\.]+)/)?.[1] || version;
+    version = ua.match(/Version\/([0-9.]+)/)?.[1] || version;
   }
 
   return {
@@ -110,10 +110,11 @@ export function checkFeatureSupport(feature: string): boolean {
   switch (feature) {
     case "heic":
       return typeof window.createImageBitmap !== 'undefined';
-    case "webp":
+    case "webp": {
       const canvas = document.createElement('canvas');
       if (!canvas || !canvas.getContext('2d')) return false;
       return canvas.toDataURL('image/webp').indexOf('data:image/webp') === 0;
+    }
     case "worker-canvas":
       return typeof OffscreenCanvas !== 'undefined';
     case "filesystem-api":

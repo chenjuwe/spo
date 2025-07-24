@@ -26,7 +26,7 @@ export class HashCacheService {
   private dbVersion = 1;
   private storeName = 'hashes';
   private db: IDBDatabase | null = null;
-  private pendingOperations = new Map<string, Promise<any>>();
+  private pendingOperations = new Map<string, Promise<unknown>>();
   private isInitialized = false;
   private initPromise: Promise<boolean> | null = null;
   

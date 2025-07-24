@@ -50,7 +50,7 @@ export interface OrganizationResult {
 export interface ProcessingTaskOptions {
   onProgress?: (progress: number) => void;
   onError?: (error: Error) => void;
-  onComplete?: (result: any) => void;
+  onComplete?: <T>(result: T) => void;
   signal?: AbortSignal;
 }
 

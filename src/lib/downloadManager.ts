@@ -288,7 +288,11 @@ export class DownloadManager {
           // 品質優化
           if (options.optimizeQuality) {
             const quality = photo.quality;
-            const adjustments: any = {};
+            const adjustments: {
+              brightness?: number;
+              contrast?: number;
+              sharpness?: number;
+            } = {};
             
             if (quality) {
               // 根據品質分析調整參數
@@ -368,7 +372,11 @@ export class DownloadManager {
       }
       
       if (options.optimizeQuality && photo.quality) {
-        const adjustments: any = {};
+        const adjustments: {
+          brightness?: number;
+          contrast?: number;
+          sharpness?: number;
+        } = {};
         const quality = photo.quality;
         
         if (quality.brightness < 40) adjustments.brightness = 20;
