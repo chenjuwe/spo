@@ -115,9 +115,50 @@ export class DownloadManager {
       abortController: new AbortController()
     };
     
-    // 設備優化設置
-    const { maxBatchSize } = getOptimizedSettings();
-    const BATCH_SIZE = Math.min(maxBatchSize * 50, 200); // 每個壓縮包最多包含的照片數量
+    // 設備優化設置 - 自適應批次大小
+    const { maxBatchSize, isLowEndDevice } = getOptimizedSettings();
+    
+    // 根據設備性能、照片數量和內存情況動態調整批次大小
+    const determineOptimalBatchSize = () => {
+      // 基礎批次大小
+      let baseBatchSize = maxBatchSize * 50;
+      
+      // 根據設備性能調整
+      if (isLowEndDevice) {
+        baseBatchSize = Math.min(baseBatchSize, 50); // 低端設備每批最多50張
+      } else if (navigator.hardwareConcurrency <= 4) {
+        baseBatchSize = Math.min(baseBatchSize, 100); // 中端設備每批最多100張
+      } else {
+        baseBatchSize = Math.min(baseBatchSize, 200); // 高端設備每批最多200張
+      }
+      
+      // 根據照片平均大小進一步調整
+      const avgPhotoSize = photos.reduce((sum, p) => sum + p.file.size, 0) / photos.length;
+      const sizeFactorMB = avgPhotoSize / (1024 * 1024);
+      
+      // 照片越大，批次越小
+      if (sizeFactorMB > 5) {
+        baseBatchSize = Math.floor(baseBatchSize * 0.5);
+      } else if (sizeFactorMB > 2) {
+        baseBatchSize = Math.floor(baseBatchSize * 0.7);
+      }
+      
+      // 根據可用內存進行最終調整 (如果可用)
+      if (navigator.deviceMemory) {
+        const memoryGB = navigator.deviceMemory;
+        if (memoryGB < 4) {
+          baseBatchSize = Math.min(baseBatchSize, 30);
+        } else if (memoryGB < 8) {
+          baseBatchSize = Math.min(baseBatchSize, 80);
+        }
+      }
+      
+      // 確保至少處理10張照片
+      return Math.max(10, Math.min(baseBatchSize, photos.length));
+    };
+    
+    const BATCH_SIZE = determineOptimalBatchSize(); // 每個壓縮包最多包含的照片數量
+    console.info(`下載批次大小: ${BATCH_SIZE} 張照片`);
     
     // 通知開始下載
     this.listeners.forEach(listener => listener.onStart?.());

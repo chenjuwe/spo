@@ -219,12 +219,28 @@ export function getOptimizedSettings(): {
   maxBatchSize: number;
   useHighPrecision: boolean;
   maxFileSizeMB: number;
+  isLowEndDevice: boolean;
+  isMidRangeDevice: boolean;
+  isHighEndDevice: boolean;
+  deviceMemory: number;
 } {
   const { isHighPerformance, processorCores } = checkPerformanceCompatibility();
+  
+  // 檢測設備記憶體 (如果可用)
+  const memory = (navigator as any).deviceMemory || 4; // 默認假設 4GB
+  
+  // 設備性能分級
+  const isLowEndDevice = processorCores <= 2 || memory <= 2;
+  const isHighEndDevice = processorCores >= 8 && memory >= 8;
+  const isMidRangeDevice = !isLowEndDevice && !isHighEndDevice;
   
   return {
     maxBatchSize: isHighPerformance ? 10 : 3,
     useHighPrecision: isHighPerformance,
-    maxFileSizeMB: isHighPerformance ? 50 : 20
+    maxFileSizeMB: isHighPerformance ? 50 : 20,
+    isLowEndDevice,
+    isMidRangeDevice,
+    isHighEndDevice,
+    deviceMemory: memory
   };
 } 

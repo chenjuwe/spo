@@ -3,47 +3,136 @@ import { analyzeImageQuality, calculatePerceptualHash, calculateDifferenceHash, 
 /**
  * Worker 入口處理函數
  * 支援分析圖片品質、計算感知哈希等任務
+ * 增強版：支持通過 URL 傳輸文件和優先級處理
  */
 self.onmessage = async (e) => {
-  const { task, file, id, options = {} } = e.data;
+  const { task, id, options = {}, priority = 0 } = e.data;
+  const startTime = performance.now();
 
   try {
     let result;
+    let source;
     
+    // 處理輸入源 - 支持 File 對象或 URL
+    if (e.data.file) {
+      source = e.data.file;
+    } else if (e.data.fileUrl && e.data.useFileUrl) {
+      // 使用傳遞的文件 URL
+      source = {
+        fileUrl: e.data.fileUrl,
+        fileName: e.data.fileName || '',
+        fileType: e.data.fileType || '',
+        fileSize: e.data.fileSize || 0,
+        useFileUrl: true
+      };
+    } else if (e.data.files && Array.isArray(e.data.files)) {
+      // 支援批量處理
+      source = e.data.files;
+    } else {
+      throw new Error(`缺少有效的輸入源`);
+    }
+    
+    // 處理任務
     switch (task) {
       case 'analyzeImageQuality':
-        result = await analyzeImageQuality(file);
+        if (Array.isArray(source)) {
+          // 批量處理
+          result = await Promise.all(source.map(async (item) => {
+            try {
+              return { id: item.id || null, result: await analyzeImageQuality(item) };
+            } catch (err) {
+              return { id: item.id || null, error: err.message || String(err) };
+            }
+          }));
+        } else {
+          result = await analyzeImageQuality(source);
+        }
         break;
         
       case 'calculatePerceptualHash':
-        result = await calculatePerceptualHash(file);
+        if (Array.isArray(source)) {
+          result = await Promise.all(source.map(async (item) => {
+            try {
+              return { id: item.id || null, result: await calculatePerceptualHash(item) };
+            } catch (err) {
+              return { id: item.id || null, error: err.message || String(err) };
+            }
+          }));
+        } else {
+          result = await calculatePerceptualHash(source);
+        }
         break;
         
       case 'calculateDifferenceHash':
-        result = await calculateDifferenceHash(file);
+        if (Array.isArray(source)) {
+          result = await Promise.all(source.map(async (item) => {
+            try {
+              return { id: item.id || null, result: await calculateDifferenceHash(item) };
+            } catch (err) {
+              return { id: item.id || null, error: err.message || String(err) };
+            }
+          }));
+        } else {
+          result = await calculateDifferenceHash(source);
+        }
         break;
         
       case 'calculateAverageHash':
-        result = await calculateAverageHash(file);
+        if (Array.isArray(source)) {
+          result = await Promise.all(source.map(async (item) => {
+            try {
+              return { id: item.id || null, result: await calculateAverageHash(item) };
+            } catch (err) {
+              return { id: item.id || null, error: err.message || String(err) };
+            }
+          }));
+        } else {
+          result = await calculateAverageHash(source);
+        }
         break;
         
       case 'calculateAllHashes':
-        result = await calculateAllHashes(file);
+        if (Array.isArray(source)) {
+          result = await Promise.all(source.map(async (item) => {
+            try {
+              return { id: item.id || null, result: await calculateAllHashes(item) };
+            } catch (err) {
+              return { id: item.id || null, error: err.message || String(err) };
+            }
+          }));
+        } else {
+          result = await calculateAllHashes(source);
+        }
         break;
         
       default:
         throw new Error(`不支援的任務類型: ${task}`);
     }
     
-    self.postMessage({ id, result });
+    const endTime = performance.now();
+    const processingTime = Math.round(endTime - startTime);
+    
+    // 如果處理時間超過警告閾值，記錄警告
+    if (processingTime > 1000) {
+      console.warn(`Worker 處理任務 ${task} 花費了 ${processingTime}ms，可能導致性能問題`);
+    }
+    
+    self.postMessage({ id, result, processingTime, priority });
   } catch (error) {
-    console.error(`Worker 錯誤 (${task}):`, error);
-    self.postMessage({ 
-      id, 
-      error: error instanceof Error ? error.message : '處理照片時發生未知錯誤'
-    });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Worker 錯誤: ${errorMessage}`);
+    self.postMessage({ id, error: errorMessage, priority });
   }
 };
+
+// 處理優先級中斷機制
+self.addEventListener('message', (e) => {
+  // 如果收到高優先級中斷信號，可以選擇中斷當前低優先級任務
+  if (e.data.type === 'interrupt' && e.data.priority > 5) {
+    console.log('收到高優先級中斷信號，準備切換任務');
+    // 在這裡可以實現任務切換邏輯，例如通過全局變量標記中斷狀態
+  }
+});
 
 // 確保 Worker 可以在不支援 OffscreenCanvas 的瀏覽器中工作
 if (typeof OffscreenCanvas === 'undefined') {

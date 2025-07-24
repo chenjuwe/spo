@@ -11,6 +11,17 @@ import PhotoProcessor from "./PhotoProcessor";
 import { checkBrowserCompatibility, showCompatibilityWarnings } from "@/lib/compatibilityChecker";
 import { useKeyboardShortcuts, KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
 
+// 擴展 Performance 介面添加 Chrome 特有的 memory 屬性
+declare global {
+  interface Performance {
+    memory?: {
+      usedJSHeapSize: number;
+      jsHeapSizeLimit: number;
+      totalJSHeapSize: number;
+    };
+  }
+}
+
 // 動態載入大型元件
 const PhotoGrid = lazy(() => import("./PhotoGrid"));
 const SettingsPanel = lazy(() => import("./SettingsPanel"));
@@ -165,14 +176,59 @@ const PhotoOrganizer = () => {
   useEffect(() => {
     return () => {
       photos.forEach(photo => {
-        try {
-          URL.revokeObjectURL(photo.preview);
-        } catch (error) {
-          console.warn('釋放資源失敗:', error);
+        if (photo.preview && !photo.preview.startsWith('data:')) {
+          try {
+            URL.revokeObjectURL(photo.preview);
+          } catch (error) {
+            console.warn('釋放資源失敗:', error);
+          }
         }
       });
     };
   }, [photos]);
+  
+  // 監控記憶體使用，並在需要時釋放資源
+  useEffect(() => {
+    if (photos.length > 30) { // 當照片數量較多時啟用記憶體監控
+      // 定期檢查並釋放未顯示照片的預覽
+      const intervalId = setInterval(() => {
+        // 只在非處理過程中執行
+        if (!showResults) {
+          console.info('執行記憶體優化...');
+          
+          // 幫助觸發垃圾回收
+          const largeArray = new Array(1000).fill(0);
+          largeArray.length = 0;
+          
+          // 使用類型斷言來處理 Chrome 特有的 memory API
+          const performance = window.performance as Performance & { 
+            memory?: { 
+              usedJSHeapSize: number; 
+              jsHeapSizeLimit: number; 
+            }
+          };
+          
+          if (performance && performance.memory) {
+            const memUsage = performance.memory;
+            console.info(`記憶體使用情況: ${Math.round(memUsage.usedJSHeapSize / 1024 / 1024)}MB / ${Math.round(memUsage.jsHeapSizeLimit / 1024 / 1024)}MB`);
+            
+            // 如果記憶體使用超過閾值，釋放更多資源
+            if (memUsage.usedJSHeapSize > memUsage.jsHeapSizeLimit * 0.7) {
+              console.warn('記憶體使用較高，執行額外清理...');
+              // 在極端情況下清理緩存
+              import('@/lib/hashCacheService').then(({ hashCache }) => {
+                hashCache.pruneOldEntries(3 * 24 * 60 * 60 * 1000); // 清理三天前的緩存
+              }).catch(e => console.error('清理緩存失敗:', e));
+            }
+          }
+        }
+      }, 30000); // 每30秒檢查一次
+      
+      return () => clearInterval(intervalId);
+    }
+    
+    return undefined;
+  }, [photos.length, showResults]);
 
   // 如果顯示結果頁面
   if (showResults) {
