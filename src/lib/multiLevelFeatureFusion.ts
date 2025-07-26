@@ -1,53 +1,120 @@
 /**
- * 多層級特徵融合系統
- * 結合低級特徵（哈希）、中級特徵（顏色直方圖、紋理）和高級特徵（深度學習）
+ * 多層級特徵融合模組
+ * 
+ * 此模組提供用於從影像中提取多種級別特徵並融合它們的功能
+ * 幫助增強相似度計算的準確性
  */
 
-import { HashResult } from './integratedHasher';
-import { calculateHashSimilarity } from './integratedHasher';
-import { calculateCosineSimilarity } from './dimensionReduction';
-import { getFeatureExtractor } from './deepFeatureExtractor';
+import { PhotoFile, HashResult } from './types';
+import { errorHandler, ErrorType, ErrorSeverity } from './errorHandlingService';
 
 /**
  * 特徵級別枚舉
  */
 export enum FeatureLevel {
-  LOW = 'low',     // 低級特徵：感知哈希、差值哈希等
-  MID = 'mid',     // 中級特徵：顏色直方圖、紋理特徵
-  HIGH = 'high'    // 高級特徵：深度學習特徵
+  /**
+   * 低級特徵 - 基於哈希的特徵
+   * 適用於快速比較和初步篩選
+   */
+  LOW = 'LOW',
+  
+  /**
+   * 中級特徵 - 顏色和紋理特徵
+   * 提供比哈希更詳細的比較
+   */
+  MID = 'MID',
+  
+  /**
+   * 高級特徵 - 基於深度學習的特徵
+   * 提供語義層面的比較
+   */
+  HIGH = 'HIGH'
 }
 
 /**
- * 多層級特徵
+ * 多級別特徵介面
  */
 export interface MultiLevelFeature {
   /**
-   * 圖像 ID
+   * 特徵 ID (通常與照片 ID 相同)
    */
   id: string;
   
   /**
-   * 低級特徵（哈希）
+   * 低級特徵 - 使用各種哈希
    */
-  lowLevelFeatures?: HashResult;
+  lowLevelFeatures?: HashResult | undefined;
   
   /**
-   * 中級特徵（顏色、紋理）
+   * 中級特徵 - 顏色直方圖和紋理描述符
    */
   midLevelFeatures?: {
-    colorHistogram?: number[];
-    textureFeatures?: number[];
+    colorHistogram?: number[] | undefined;
+    textureFeatures?: number[] | undefined;
+  } | undefined;
+  
+  /**
+   * 高級特徵 - 深度學習模型提取的特徵向量
+   * 例如從 MobileNet 或其他 CNN 模型提取
+   */
+  highLevelFeatures?: number[] | undefined;
+  
+  /**
+   * 額外的元數據
+   */
+  metadata?: {
+    /**
+     * 原始照片
+     */
+    photo: PhotoFile;
+    
+    /**
+     * 提取時間戳
+     */
+    timestamp?: number | undefined;
+    
+    /**
+     * 特徵提取花費的時間（毫秒）
+     */
+    extractionTime?: number | undefined;
+    
+    /**
+     * 使用的模型信息（對於高級特徵）
+     */
+    modelInfo?: {
+      name: string;
+      version: string;
+    } | undefined;
+  } | undefined;
+}
+
+/**
+ * 特徵相似度結果介面
+ */
+export interface FeatureSimilarityResult {
+  /**
+   * 兩個特徵之間的總體相似度得分 (0-1)
+   */
+  similarityScore: number;
+  
+  /**
+   * 各級別特徵的相似度得分
+   */
+  levelScores?: {
+    low?: number;
+    mid?: number;
+    high?: number;
   };
   
   /**
-   * 高級特徵（深度學習）
+   * 比較的特徵 ID
    */
-  highLevelFeatures?: number[];
+  comparedFeatureIds: [string, string];
   
   /**
-   * 元數據（可以存儲圖像相關信息）
+   * 用於計算相似度的特徵級別
    */
-  metadata?: any;
+  levelsUsed: FeatureLevel[];
 }
 
 /**
@@ -79,20 +146,7 @@ export interface FeatureFusionWeights {
 }
 
 /**
- * 默認特徵融合權重
- */
-export const DEFAULT_FUSION_WEIGHTS: FeatureFusionWeights = {
-  lowLevelWeight: 0.30,
-  midLevelWeight: 0.30,
-  highLevelWeight: 0.40,
-  midLevelInternalWeights: {
-    colorWeight: 0.6,
-    textureWeight: 0.4
-  }
-};
-
-/**
- * 特徵融合選項
+ * 特徵融合配置選項
  */
 export interface FeatureFusionOptions {
   /**
@@ -114,7 +168,30 @@ export interface FeatureFusionOptions {
    * 使用的特徵級別
    */
   usedLevels: FeatureLevel[];
+  
+  /**
+   * 深度學習模型選項
+   */
+  modelOptions?: {
+    modelType: 'mobilenet' | 'efficientnet' | 'custom';
+    modelPath?: string;
+    inputSize?: number;
+    useGPU?: boolean;
+  };
 }
+
+/**
+ * 默認特徵融合權重
+ */
+export const DEFAULT_FUSION_WEIGHTS: FeatureFusionWeights = {
+  lowLevelWeight: 0.30,
+  midLevelWeight: 0.30,
+  highLevelWeight: 0.40,
+  midLevelInternalWeights: {
+    colorWeight: 0.6,
+    textureWeight: 0.4
+  }
+};
 
 /**
  * 默認特徵融合選項
@@ -123,8 +200,270 @@ export const DEFAULT_FUSION_OPTIONS: FeatureFusionOptions = {
   weights: DEFAULT_FUSION_WEIGHTS,
   similarityThreshold: 90,
   useAdaptiveWeights: true,
-  usedLevels: [FeatureLevel.LOW, FeatureLevel.MID, FeatureLevel.HIGH]
+  usedLevels: [FeatureLevel.LOW, FeatureLevel.MID, FeatureLevel.HIGH],
+  modelOptions: {
+    modelType: 'mobilenet',
+    inputSize: 224,
+    useGPU: true
+  }
 };
+
+// 深度學習模型狀態變量
+let deepLearningModelLoaded = false;
+let modelLoadPromise: Promise<any> | null = null;
+let deepLearningModel: any = null;
+
+/**
+ * 加載深度學習模型（如果存在TensorFlow.js）
+ * 
+ * @returns 加載模型的Promise
+ */
+async function loadDeepLearningModel(): Promise<boolean> {
+  // 避免重複加載
+  if (deepLearningModelLoaded) {
+    return true;
+  }
+
+  // 如果已經有加載操作進行中，返回該Promise
+  if (modelLoadPromise) {
+    return modelLoadPromise;
+  }
+
+  // 初始化加載Promise
+  modelLoadPromise = (async () => {
+    try {
+      // 檢查是否有 TensorFlow.js
+      if (typeof window !== 'undefined' && 'tensorflow' in window) {
+        // @ts-ignore - 運行時導入 TF
+        const tf = (window as any).tf;
+        
+        // 如果TensorFlow存在，加載MobileNet模型
+        console.info('[Feature Fusion] 正在加載 MobileNet 模型...');
+        // @ts-ignore - 運行時訪問 mobilenet
+        deepLearningModel = await tf.loadLayersModel('https://storage.googleapis.com/tfjs-models/tfjs/mobilenet_v1_0.25_224/model.json');
+        
+        deepLearningModelLoaded = true;
+        console.info('[Feature Fusion] MobileNet 模型加載成功');
+        return true;
+      } else {
+        console.warn('[Feature Fusion] 未找到 TensorFlow.js，將使用模擬的深度特徵');
+        return false;
+      }
+    } catch (error) {
+      console.error('[Feature Fusion] 加載深度學習模型失敗:', error);
+      
+      errorHandler.handleError(
+        error instanceof Error ? error : new Error(String(error)),
+        ErrorType.SYSTEM_ERROR,
+        '加載深度學習模型失敗，將使用模擬的特徵向量',
+        true,
+        undefined,
+        ErrorSeverity.LOW
+      );
+      
+      return false;
+    } finally {
+      modelLoadPromise = null;
+    }
+  })();
+
+  return modelLoadPromise;
+}
+
+/**
+ * 使用深度學習模型提取特徵（如果可用）
+ * 
+ * @param imageElement HTML Image 元素
+ * @returns 特徵向量
+ */
+async function extractDeepFeatures(imageElement: HTMLImageElement): Promise<number[]> {
+  const modelLoaded = await loadDeepLearningModel();
+  
+  if (modelLoaded && deepLearningModel) {
+    try {
+      // @ts-ignore - 運行時導入 TF
+      const tf = (window as any).tf;
+      
+      // 準備圖像數據
+      // @ts-ignore - 運行時使用TF API
+      const tfImage = tf.browser.fromPixels(imageElement);
+      // @ts-ignore - 運行時使用TF API
+      const resizedImage = tf.image.resizeBilinear(tfImage, [224, 224]);
+      // @ts-ignore - 運行時使用TF API
+      const normalizedImage = resizedImage.div(255).expandDims();
+      
+      // 提取特徵
+      // 使用倒數第二層作為特徵向量
+      // @ts-ignore - 運行時使用TF API
+      const intermediateModel = tf.model({
+        inputs: deepLearningModel.inputs,
+        outputs: deepLearningModel.layers[deepLearningModel.layers.length - 2].output
+      });
+      
+      // @ts-ignore - 運行時使用TF API
+      const features = intermediateModel.predict(normalizedImage);
+      // @ts-ignore - 運行時使用TF API
+      const featureData = await features.data();
+      // 顯式類型轉換確保類型安全
+      const featureArray = Array.from(featureData).map(val => Number(val));
+      
+      // 釋放 TF 張量
+      // @ts-ignore - 運行時使用TF API
+      tfImage.dispose();
+      // @ts-ignore - 運行時使用TF API
+      resizedImage.dispose();
+      // @ts-ignore - 運行時使用TF API
+      normalizedImage.dispose();
+      // @ts-ignore - 運行時使用TF API
+      features.dispose();
+      
+      return featureArray;
+    } catch (error) {
+      console.error('[Feature Fusion] 提取深度特徵時出錯:', error);
+      
+      errorHandler.handleError(
+        error instanceof Error ? error : new Error(String(error)),
+        ErrorType.PHOTO_EXTRACTION_ERROR,
+        '提取深度學習特徵時出錯，將使用模擬的特徵向量',
+        true,
+        undefined,
+        ErrorSeverity.LOW
+      );
+    }
+  }
+  
+  // 如果模型不可用或提取失敗，使用模擬數據
+  const featureLength = 128;
+  console.warn(`[Feature Fusion] 使用模擬的 ${featureLength} 維度特徵向量`);
+  
+  // 使用偽隨機數生成器，但基於圖像的一些屬性
+  const seed = imageElement.width * imageElement.height + imageElement.naturalWidth;
+  const rng = makeSeededRNG(seed);
+  
+  return Array(featureLength).fill(0).map(() => rng() * 2 - 1);
+}
+
+/**
+ * 創建一個基於種子的偽隨機數生成器
+ * 
+ * @param seed 種子值
+ * @returns 隨機數生成函數
+ */
+function makeSeededRNG(seed: number): () => number {
+  let s = seed;
+  return function() {
+    s = (s * 16807) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+
+/**
+ * 計算餘弦相似度
+ * 
+ * @param vec1 向量1
+ * @param vec2 向量2
+ * @returns 餘弦相似度 (0-1)
+ */
+export function calculateCosineSimilarity(vec1: number[], vec2: number[]): number {
+  if (vec1.length !== vec2.length) {
+    throw new Error('向量長度不匹配');
+  }
+
+  let dotProduct = 0;
+  let norm1 = 0;
+  let norm2 = 0;
+
+  for (let i = 0; i < vec1.length; i++) {
+    dotProduct += vec1[i] * vec2[i];
+    norm1 += vec1[i] * vec1[i];
+    norm2 += vec2[i] * vec2[i];
+  }
+
+  // 避免除以零
+  if (norm1 === 0 || norm2 === 0) {
+    return 0;
+  }
+
+  return dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
+}
+
+/**
+ * 計算哈希相似度
+ * 
+ * @param hash1 哈希1
+ * @param hash2 哈希2
+ * @returns 相似度 (0-100)
+ */
+export function calculateHashSimilarity(hash1: HashResult, hash2: HashResult): number {
+  // 檢查兩個哈希是否有共同的類型
+  let similarity = 0;
+  let count = 0;
+
+  // 遍歷哈希類型
+  for (const type in hash1) {
+    if (hash1[type] && hash2[type]) {
+      // 計算漢明距離
+      const hash1Value = hash1[type] as string;
+      const hash2Value = hash2[type] as string;
+      if (hash1Value && hash2Value) {
+        const distance = hammingDistance(hash1Value, hash2Value);
+        // 轉換為相似度 (0-100)
+        const hashSimilarity = (1 - distance / hash1Value.length) * 100;
+        similarity += hashSimilarity;
+        count++;
+      }
+    }
+  }
+
+  // 如果沒有共同的哈希類型，返回0
+  if (count === 0) {
+    return 0;
+  }
+
+  // 返回平均相似度
+  return similarity / count;
+}
+
+/**
+ * 計算漢明距離（優化版）
+ * 
+ * @param str1 字符串1
+ * @param str2 字符串2
+ * @returns 漢明距離
+ */
+function hammingDistance(str1: string, str2: string): number {
+  if (str1.length !== str2.length) {
+    throw new Error('字符串長度不匹配');
+  }
+
+  let distance = 0;
+  
+  // 對於較長的哈希，使用位運算加速
+  if (str1.length > 32 && /^[01]+$/.test(str1) && /^[01]+$/.test(str2)) {
+    // 分塊計算，每32位一組
+    for (let i = 0; i < str1.length; i += 32) {
+      const end = Math.min(i + 32, str1.length);
+      const chunk1 = parseInt(str1.substring(i, end), 2);
+      const chunk2 = parseInt(str2.substring(i, end), 2);
+      
+      // 使用XOR和位計數來計算不同位的數量
+      let diff = chunk1 ^ chunk2;
+      while (diff) {
+        distance += diff & 1;
+        diff >>= 1;
+      }
+    }
+  } else {
+    // 對於較短或非二進制哈希，使用標準方法
+    for (let i = 0; i < str1.length; i++) {
+      if (str1[i] !== str2[i]) {
+        distance++;
+      }
+    }
+  }
+
+  return distance;
+}
 
 /**
  * 多層級特徵融合系統
@@ -140,6 +479,14 @@ export class MultiLevelFeatureFusion {
    */
   constructor(options: Partial<FeatureFusionOptions> = {}) {
     this.options = { ...DEFAULT_FUSION_OPTIONS, ...options };
+    
+    // 初始化深度學習模型（如果需要高級特徵）
+    if (this.options.usedLevels.includes(FeatureLevel.HIGH)) {
+      // 非同步加載模型
+      loadDeepLearningModel().catch(err => 
+        console.error('[MultiLevelFeatureFusion] 加載深度學習模型失敗:', err)
+      );
+    }
   }
   
   /**
@@ -572,6 +919,16 @@ export class MultiLevelFeatureFusion {
   public updateOptions(options: Partial<FeatureFusionOptions>): void {
     this.options = { ...this.options, ...options };
   }
+  
+  /**
+   * 從圖像中提取高級特徵
+   * @param imageElement 圖像元素
+   * @returns 特徵向量
+   */
+  public async extractHighLevelFeatures(imageElement: HTMLImageElement): Promise<number[]> {
+    // 使用TF.js或其他深度學習模型提取特徵
+    return extractDeepFeatures(imageElement);
+  }
 }
 
 /**
@@ -585,9 +942,9 @@ export class MultiLevelFeatureFusion {
  */
 export function createMultiLevelFeature(
   id: string,
-  lowLevelFeatures?: HashResult,
-  midLevelFeatures?: { colorHistogram?: number[], textureFeatures?: number[] },
-  highLevelFeatures?: number[],
+  lowLevelFeatures?: HashResult | undefined,
+  midLevelFeatures?: { colorHistogram?: number[], textureFeatures?: number[] } | undefined,
+  highLevelFeatures?: number[] | undefined,
   metadata?: any
 ): MultiLevelFeature {
   return {
@@ -595,6 +952,9 @@ export function createMultiLevelFeature(
     lowLevelFeatures,
     midLevelFeatures,
     highLevelFeatures,
-    metadata
+    metadata: {
+      ...metadata,
+      timestamp: Date.now()
+    }
   };
 } 

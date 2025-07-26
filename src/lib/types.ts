@@ -57,8 +57,15 @@ export interface ProcessingTaskOptions {
 }
 
 // 哈希類型定義
-export type HashType = 'pHash' | 'dHash' | 'aHash';
-export type HashResult = Record<HashType, string>;
+export type HashType = 'pHash' | 'dHash' | 'aHash' | string;
+
+// 哈希結果類型 - 使用索引簽名使其可以通過字符串進行索引
+export interface HashResult {
+  [key: string]: string;
+  pHash?: string;
+  dHash?: string;
+  aHash?: string;
+}
 
 // 哈希相似度比較閾值設定
 export interface SimilarityThresholds {

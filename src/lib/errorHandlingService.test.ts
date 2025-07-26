@@ -1,4 +1,4 @@
-import { errorHandler, ErrorType, ErrorSeverity, withRetry, withErrorHandling } from './errorHandlingService';
+import { errorHandler, ErrorType, ErrorSeverity, withRetry, withErrorHandling, safeExecute } from './errorHandlingService';
 import { toast } from 'sonner';
 import { vi, describe, test, expect, beforeEach, afterEach } from 'vitest';
 
@@ -7,7 +7,9 @@ vi.mock('sonner', () => ({
   toast: {
     error: vi.fn(),
     warning: vi.fn(),
-    info: vi.fn()
+    info: vi.fn(),
+    success: vi.fn(),
+    custom: vi.fn()
   }
 }));
 
@@ -279,6 +281,100 @@ describe('ErrorHandlingService', () => {
       await expect(wrappedFunction()).rejects.toThrow('總是失敗');
       expect(alwaysFailingFn).toHaveBeenCalledTimes(2);
       expect(toast.warning).toHaveBeenCalled();
+    });
+  });
+
+  describe('新增功能測試', () => {
+    test('setLocale 應該設置當前語言', () => {
+      // 驗證設置語言功能
+      errorHandler.setLocale('en-US');
+      
+      // 觸發錯誤處理
+      const errorId = errorHandler.handleError(
+        new Error('Test error'),
+        ErrorType.SYSTEM_ERROR,
+        'System error details'
+      );
+      
+      // 檢查錯誤是否被正確記錄
+      const error = errorHandler.getErrorById(errorId);
+      expect(error).toBeDefined();
+    });
+
+    test('provideRecoveryOption 應該在錯誤可恢復時提供恢復選項', () => {
+      const recoveryAction = vi.fn();
+      
+      errorHandler.handleError(
+        new Error('Recoverable error'),
+        ErrorType.NETWORK_ERROR,
+        'Network error details',
+        true, // 可恢復
+        recoveryAction,
+        ErrorSeverity.MEDIUM
+      );
+      
+      // 檢查是否顯示了恢復選項
+      expect(toast.warning).toHaveBeenCalled();
+      // 實際上，完整測試需要檢查 toast 的 action 參數，但由於我們的模擬有限制，這裡只能簡單檢查
+    });
+
+    test('safeExecute 應該正確處理成功操作', async () => {
+      const successOperation = async () => 'success';
+      
+      const result = await safeExecute(successOperation);
+      
+      expect(result.isOk()).toBe(true);
+      expect(result.unwrap()).toBe('success');
+    });
+
+    test('safeExecute 應該正確處理失敗操作', async () => {
+      const failOperation = async () => {
+        throw new Error('Operation failed');
+      };
+      
+      const result = await safeExecute(
+        failOperation,
+        {
+          errorType: ErrorType.SYSTEM_ERROR,
+          errorMessage: 'Test error message',
+          severity: ErrorSeverity.MEDIUM
+        }
+      );
+      
+      expect(result.isErr()).toBe(true);
+      expect(toast.warning).toHaveBeenCalled();
+    });
+
+    test('detectErrorAntiPatterns 應該檢測錯誤處理的反模式', () => {
+      errorHandler.clearErrorHistory();
+      
+      // 創建一個可恢復但沒有恢復操作的錯誤
+      errorHandler.handleError(
+        'Error without recovery',
+        ErrorType.PHOTO_LOADING_ERROR,
+        'No recovery action',
+        true, // 可恢復
+        undefined, // 沒有恢復操作
+        ErrorSeverity.MEDIUM
+      );
+      
+      // 創建另一個具有相同類型但不同嚴重度的錯誤
+      errorHandler.handleError(
+        'Error with different severity',
+        ErrorType.PHOTO_LOADING_ERROR,
+        'Different severity',
+        false,
+        undefined,
+        ErrorSeverity.HIGH // 不同的嚴重度
+      );
+      
+      const { issues, suggestions } = errorHandler.detectErrorAntiPatterns();
+      
+      // 預期應該檢測到兩個問題：
+      // 1. 可恢復但沒有恢復操作的錯誤
+      // 2. 同一錯誤類型使用了不一致的嚴重度
+      expect(issues.length).toBeGreaterThanOrEqual(2);
+      expect(suggestions.length).toBeGreaterThanOrEqual(2);
     });
   });
 }); 

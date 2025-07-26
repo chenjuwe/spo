@@ -1,304 +1,434 @@
 /**
- * 輸入驗證模塊
+ * 輸入數據驗證工具
  * 
- * 提供嚴格的輸入驗證功能，確保用戶提供的數據安全可靠
- * 
- * @module inputValidator
+ * 用於驗證使用者上傳的文件和其他輸入數據是否符合要求
  */
 
-import { PhotoFile } from './types';
-import { Result, ok, err } from './result';
-
-/**
- * 支持的圖片MIME類型
- */
-export const SUPPORTED_IMAGE_TYPES = [
-  'image/jpeg', 
-  'image/png', 
-  'image/gif', 
-  'image/webp', 
-  'image/heic', 
-  'image/heif'
-];
-
-/**
- * 檔案大小限制 (20MB)
- */
-export const MAX_FILE_SIZE = 20 * 1024 * 1024;
+import { PhotoFile } from "./types";
+import { ErrorType, ErrorSeverity, errorHandler } from "./errorHandlingService";
 
 /**
  * 驗證錯誤類型
  */
 export enum ValidationErrorType {
-  INVALID_TYPE = 'INVALID_TYPE',
-  FILE_TOO_LARGE = 'FILE_TOO_LARGE',
+  // 文件類型錯誤
+  INVALID_FILE_TYPE = 'INVALID_FILE_TYPE',
+  
+  // 文件大小錯誤
+  INVALID_FILE_SIZE = 'INVALID_FILE_SIZE',
+  
+  // 圖像維度錯誤
+  INVALID_DIMENSION = 'INVALID_DIMENSION',
+  
+  // 空文件
   EMPTY_FILE = 'EMPTY_FILE',
+  
+  // 已損壞的文件
   CORRUPTED_FILE = 'CORRUPTED_FILE',
-  INVALID_FORMAT = 'INVALID_FORMAT',
-  OTHER = 'OTHER'
+  
+  // 格式錯誤
+  FORMAT_ERROR = 'FORMAT_ERROR',
+  
+  // 其他錯誤
+  OTHER_ERROR = 'OTHER_ERROR'
 }
 
 /**
- * 驗證錯誤
+ * 驗證錯誤接口
  */
-export class ValidationError extends Error {
+export interface ValidationError {
   /**
    * 錯誤類型
    */
-  public type: ValidationErrorType;
+  type: ValidationErrorType;
+  
+  /**
+   * 錯誤消息
+   */
+  message: string;
   
   /**
    * 詳細信息
    */
-  public details?: Record<string, any>;
+  details?: string;
+}
+
+/**
+ * 驗證選項
+ */
+export interface ValidationOptions {
+  /**
+   * 是否檢查尺寸
+   */
+  checkDimensions?: boolean;
   
   /**
-   * 創建驗證錯誤
-   * 
-   * @param type 錯誤類型
-   * @param message 錯誤消息
-   * @param details 詳細信息
+   * 最小寬度 (像素)
    */
-  constructor(type: ValidationErrorType, message: string, details?: Record<string, any>) {
-    super(message);
-    this.name = 'ValidationError';
-    this.type = type;
-    this.details = details;
-  }
-}
-
-/**
- * 驗證單個文件
- * 
- * @param file 文件對象
- * @returns 驗證結果
- */
-export function validateFile(file: File): Result<File, ValidationError> {
-  try {
-    // 驗證文件類型
-    if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) {
-      return err(
-        new ValidationError(
-          ValidationErrorType.INVALID_TYPE,
-          `不支持的文件類型: ${file.type}`,
-          { fileType: file.type, supportedTypes: SUPPORTED_IMAGE_TYPES }
-        )
-      );
-    }
-    
-    // 驗證文件大小
-    if (file.size > MAX_FILE_SIZE) {
-      return err(
-        new ValidationError(
-          ValidationErrorType.FILE_TOO_LARGE,
-          `文件過大: ${(file.size / (1024 * 1024)).toFixed(2)}MB (最大限制: ${MAX_FILE_SIZE / (1024 * 1024)}MB)`,
-          { fileSize: file.size, maxSize: MAX_FILE_SIZE }
-        )
-      );
-    }
-    
-    // 驗證文件不為空
-    if (file.size === 0) {
-      return err(
-        new ValidationError(
-          ValidationErrorType.EMPTY_FILE,
-          `文件為空: ${file.name}`,
-          { fileName: file.name }
-        )
-      );
-    }
-    
-    return ok(file);
-  } catch (error) {
-    return err(
-      new ValidationError(
-        ValidationErrorType.OTHER,
-        `驗證文件時發生錯誤: ${error instanceof Error ? error.message : String(error)}`,
-        { fileName: file.name, originalError: error }
-      )
-    );
-  }
-}
-
-/**
- * 驗證照片文件
- * 
- * @param photo 照片文件對象
- * @returns 驗證結果
- */
-export function validatePhotoFile(photo: PhotoFile): Result<PhotoFile, ValidationError> {
-  try {
-    // 驗證基本屬性
-    if (!photo.id) {
-      return err(
-        new ValidationError(
-          ValidationErrorType.INVALID_FORMAT,
-          '照片缺少ID',
-          { photo }
-        )
-      );
-    }
-    
-    if (!photo.file) {
-      return err(
-        new ValidationError(
-          ValidationErrorType.INVALID_FORMAT,
-          '照片缺少文件數據',
-          { photoId: photo.id }
-        )
-      );
-    }
-    
-    if (!photo.preview) {
-      return err(
-        new ValidationError(
-          ValidationErrorType.INVALID_FORMAT,
-          '照片缺少預覽圖',
-          { photoId: photo.id }
-        )
-      );
-    }
-    
-    // 驗證文件
-    const fileResult = validateFile(photo.file);
-    if (fileResult.isErr()) {
-      return fileResult.mapErr(error => {
-        error.details = { ...error.details, photoId: photo.id };
-        return error;
-      });
-    }
-    
-    return ok(photo);
-  } catch (error) {
-    return err(
-      new ValidationError(
-        ValidationErrorType.OTHER,
-        `驗證照片時發生錯誤: ${error instanceof Error ? error.message : String(error)}`,
-        { photoId: photo.id, originalError: error }
-      )
-    );
-  }
-}
-
-/**
- * 批量驗證照片文件
- * 
- * @param photos 照片文件數組
- * @returns 驗證結果，包含有效照片和錯誤信息
- */
-export function validatePhotoBatch(
-  photos: PhotoFile[]
-): { validPhotos: PhotoFile[], errors: Array<{ photo: PhotoFile, error: ValidationError }> } {
-  const validPhotos: PhotoFile[] = [];
-  const errors: Array<{ photo: PhotoFile, error: ValidationError }> = [];
+  minWidth?: number;
   
-  for (const photo of photos) {
-    const result = validatePhotoFile(photo);
+  /**
+   * 最小高度 (像素)
+   */
+  minHeight?: number;
+  
+  /**
+   * 最大文件大小 (位元組)
+   */
+  maxFileSize?: number;
+  
+  /**
+   * 是否在錯誤時自動顯示通知
+   */
+  showErrorNotification?: boolean;
+}
+
+// 默認驗證選項
+const DEFAULT_VALIDATION_OPTIONS: ValidationOptions = {
+  checkDimensions: false,
+  minWidth: 100,
+  minHeight: 100,
+  maxFileSize: 20 * 1024 * 1024, // 20MB
+  showErrorNotification: false
+};
+
+/**
+ * 驗證照片批次
+ * 
+ * @param photos 照片數組
+ * @param options 驗證選項
+ * @returns 有效照片和驗證錯誤
+ */
+export async function validatePhotoBatch(
+  photos: PhotoFile[],
+  options: ValidationOptions = {}
+): Promise<{
+  validPhotos: PhotoFile[];
+  errors: Array<{photo: PhotoFile; error: ValidationError}>;
+}> {
+  // 合併選項
+  const mergedOptions = { ...DEFAULT_VALIDATION_OPTIONS, ...options };
+  const validPhotos: PhotoFile[] = [];
+  const errors: Array<{photo: PhotoFile; error: ValidationError}> = [];
+  
+  // 使用 Promise.all 並行處理所有照片驗證
+  const validationPromises = photos.map(async (photo) => {
+    // 基本驗證
+    const basicValidation = validatePhoto(photo, mergedOptions);
     
-    if (result.isOk()) {
-      validPhotos.push(photo);
-    } else {
-      errors.push({
-        photo,
-        error: result.error
-      });
+    if (!basicValidation.valid) {
+      if (basicValidation.error) {
+        // 添加到錯誤列表
+        errors.push({
+          photo,
+          error: basicValidation.error
+        });
+        
+        // 如果需要顯示錯誤通知
+        if (mergedOptions.showErrorNotification) {
+          errorHandler.handleError(
+            new Error(basicValidation.error.message),
+            mapValidationErrorToErrorType(basicValidation.error.type),
+            basicValidation.error.details,
+            false,
+            undefined,
+            ErrorSeverity.MEDIUM
+          );
+        }
+      }
+      return;
     }
+    
+    // 如果需要檢查尺寸
+    if (mergedOptions.checkDimensions) {
+      const dimensionValidation = await validatePhotoDimensions(
+        photo,
+        mergedOptions.minWidth,
+        mergedOptions.minHeight
+      );
+      
+      if (!dimensionValidation.valid) {
+        if (dimensionValidation.error) {
+          // 添加到錯誤列表
+          errors.push({
+            photo,
+            error: dimensionValidation.error
+          });
+          
+          // 如果需要顯示錯誤通知
+          if (mergedOptions.showErrorNotification) {
+            errorHandler.handleError(
+              new Error(dimensionValidation.error.message),
+              ErrorType.PHOTO_FORMAT_ERROR,
+              dimensionValidation.error.details,
+              false,
+              undefined,
+              ErrorSeverity.MEDIUM
+            );
+          }
+        }
+        return;
+      }
+    }
+    
+    // 如果通過所有驗證，添加到有效照片列表
+    validPhotos.push(photo);
+  });
+  
+  // 等待所有驗證完成
+  await Promise.all(validationPromises);
+  
+  // 如果所有照片都無效且設置了顯示錯誤通知
+  if (validPhotos.length === 0 && photos.length > 0 && mergedOptions.showErrorNotification) {
+    errorHandler.handleError(
+      new Error('沒有有效的照片可處理'),
+      ErrorType.INPUT_ERROR,
+      '請上傳有效的照片',
+      true,
+      undefined,
+      ErrorSeverity.MEDIUM
+    );
   }
   
   return { validPhotos, errors };
 }
 
 /**
- * 驗證圖像數據
+ * 將驗證錯誤類型映射到錯誤處理服務的錯誤類型
  * 
- * @param imageData 圖像數據
- * @returns 驗證結果
+ * @param validationType 驗證錯誤類型
+ * @returns 對應的錯誤處理服務錯誤類型
  */
-export function validateImageData(imageData: ImageData): Result<ImageData, ValidationError> {
-  try {
-    // 驗證尺寸
-    if (imageData.width <= 0 || imageData.height <= 0) {
-      return err(
-        new ValidationError(
-          ValidationErrorType.INVALID_FORMAT,
-          `無效的圖像尺寸: ${imageData.width}x${imageData.height}`,
-          { width: imageData.width, height: imageData.height }
-        )
-      );
-    }
-    
-    // 驗證數據
-    if (!imageData.data || imageData.data.length !== imageData.width * imageData.height * 4) {
-      return err(
-        new ValidationError(
-          ValidationErrorType.CORRUPTED_FILE,
-          '圖像數據不完整',
-          { 
-            dataLength: imageData.data?.length,
-            expectedLength: imageData.width * imageData.height * 4 
-          }
-        )
-      );
-    }
-    
-    return ok(imageData);
-  } catch (error) {
-    return err(
-      new ValidationError(
-        ValidationErrorType.OTHER,
-        `驗證圖像數據時發生錯誤: ${error instanceof Error ? error.message : String(error)}`
-      )
-    );
+export function mapValidationErrorToErrorType(validationType: ValidationErrorType): ErrorType {
+  switch (validationType) {
+    case ValidationErrorType.INVALID_FILE_TYPE:
+      return ErrorType.FILE_TYPE_ERROR;
+    case ValidationErrorType.INVALID_FILE_SIZE:
+      return ErrorType.PHOTO_FORMAT_ERROR;
+    case ValidationErrorType.INVALID_DIMENSION:
+      return ErrorType.PHOTO_FORMAT_ERROR;
+    case ValidationErrorType.EMPTY_FILE:
+      return ErrorType.PHOTO_LOADING_ERROR;
+    case ValidationErrorType.CORRUPTED_FILE:
+      return ErrorType.PHOTO_LOADING_ERROR;
+    case ValidationErrorType.FORMAT_ERROR:
+      return ErrorType.PHOTO_FORMAT_ERROR;
+    case ValidationErrorType.OTHER_ERROR:
+    default:
+      return ErrorType.INPUT_ERROR;
   }
 }
 
 /**
- * 從 URL 加載並驗證圖像
+ * 驗證單個照片
  * 
- * @param url 圖像URL
- * @returns 驗證結果，包含圖像數據
+ * @param photo 照片
+ * @param options 驗證選項
+ * @returns 驗證結果
  */
-export async function loadAndValidateImage(url: string): Promise<Result<ImageData, ValidationError>> {
-  try {
-    // 創建圖像對象
+export function validatePhoto(
+  photo: PhotoFile,
+  options: ValidationOptions = {}
+): {
+  valid: boolean;
+  error?: ValidationError;
+} {
+  // 合併選項
+  const mergedOptions = { ...DEFAULT_VALIDATION_OPTIONS, ...options };
+  
+  // 檢查文件是否存在
+  if (!photo.file) {
+    return {
+      valid: false,
+      error: {
+        type: ValidationErrorType.EMPTY_FILE,
+        message: '照片文件不存在',
+        details: '無法處理不存在的文件'
+      }
+    };
+  }
+  
+  // 檢查文件大小
+  const maxSize = mergedOptions.maxFileSize || 20 * 1024 * 1024; // 20MB
+  if (photo.file.size > maxSize) {
+    return {
+      valid: false,
+      error: {
+        type: ValidationErrorType.INVALID_FILE_SIZE,
+        message: '照片文件過大',
+        details: `文件大小超過上限 (${formatFileSize(maxSize)})`
+      }
+    };
+  }
+  
+  // 檢查文件是否為空
+  if (photo.file.size === 0) {
+    return {
+      valid: false,
+      error: {
+        type: ValidationErrorType.EMPTY_FILE,
+        message: '照片文件為空',
+        details: '無法處理空文件'
+      }
+    };
+  }
+  
+  // 檢查文件類型
+  // 基於 MIME 類型檢查
+  const isValidMime = isValidImageType(photo.file.type);
+  
+  // 基於文件擴展名檢查 (對於 HEIC 和某些瀏覽器可能無法識別的文件)
+  const isValidExtension = isValidImageExtension(photo.file.name);
+  
+  // 文件類型必須符合 MIME 類型或擴展名
+  if (!isValidMime && !isValidExtension) {
+    return {
+      valid: false,
+      error: {
+        type: ValidationErrorType.INVALID_FILE_TYPE,
+        message: '不支持的照片格式',
+        details: `僅支持 JPEG、PNG、WebP、GIF、HEIC/HEIF 等常見格式，當前格式: ${photo.file.type || '未知'}, 擴展名: ${photo.file.name.split('.').pop() || '未知'}`
+      }
+    };
+  }
+  
+  // 照片通過所有基本驗證
+  return { valid: true };
+}
+
+/**
+ * 驗證照片尺寸
+ * 
+ * @param photo 照片
+ * @param minWidth 最小寬度
+ * @param minHeight 最小高度
+ * @returns Promise<驗證結果>
+ */
+export function validatePhotoDimensions(
+  photo: PhotoFile,
+  minWidth: number = 100,
+  minHeight: number = 100
+): Promise<{
+  valid: boolean;
+  error?: ValidationError;
+  width?: number;
+  height?: number;
+}> {
+  return new Promise((resolve) => {
     const img = new Image();
     
-    // 等待圖像加載
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = reject;
-      img.src = url;
-    });
+    img.onload = () => {
+      const { width, height } = img;
+      
+      if (width < minWidth || height < minHeight) {
+        resolve({
+          valid: false,
+          error: {
+            type: ValidationErrorType.INVALID_DIMENSION,
+            message: '照片尺寸太小',
+            details: `照片必須至少 ${minWidth}x${minHeight} 像素，當前尺寸: ${width}x${height}`
+          },
+          width,
+          height
+        });
+      } else {
+        resolve({
+          valid: true,
+          width,
+          height
+        });
+      }
+    };
     
-    // 繪製到 Canvas
-    const canvas = document.createElement('canvas');
-    canvas.width = img.width;
-    canvas.height = img.height;
+    img.onerror = () => {
+      resolve({
+        valid: false,
+        error: {
+          type: ValidationErrorType.CORRUPTED_FILE,
+          message: '照片文件已損壞',
+          details: '無法加載圖像數據'
+        }
+      });
+    };
     
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      return err(
-        new ValidationError(
-          ValidationErrorType.OTHER,
-          '無法創建 Canvas 上下文'
-        )
-      );
-    }
-    
-    ctx.drawImage(img, 0, 0);
-    
-    // 獲取圖像數據
-    const imageData = ctx.getImageData(0, 0, img.width, img.height);
-    
-    // 驗證圖像數據
-    return validateImageData(imageData);
-  } catch (error) {
-    return err(
-      new ValidationError(
-        ValidationErrorType.OTHER,
-        `加載圖像失敗: ${error instanceof Error ? error.message : String(error)}`,
-        { url }
-      )
-    );
+    img.src = photo.preview;
+  });
+}
+
+/**
+ * 檢查是否為有效的圖像文件類型
+ * 
+ * @param mimeType MIME 類型
+ * @returns 是否為有效的圖像文件類型
+ */
+export function isValidImageType(mimeType: string): boolean {
+  // 擴展支持的MIME類型列表
+  const validTypes = [
+    'image/jpeg', 
+    'image/png', 
+    'image/webp', 
+    'image/gif', 
+    'image/heic', 
+    'image/heif',
+    'image/bmp',
+    'image/tiff'
+  ];
+  return validTypes.includes(mimeType);
+}
+
+/**
+ * 檢查文件擴展名是否為有效的圖像格式
+ * 
+ * @param filename 文件名
+ * @returns 是否為有效的圖像擴展名
+ */
+export function isValidImageExtension(filename: string): boolean {
+  // 確保文件名存在
+  if (!filename || typeof filename !== 'string') {
+    return false;
+  }
+  
+  // 獲取文件擴展名，處理沒有擴展名的情況
+  const extensionMatch = filename.match(/\.([^.]+)$/);
+  if (!extensionMatch) {
+    return false;
+  }
+  
+  const extension = extensionMatch[1].toLowerCase();
+  // 擴展支持的文件擴展名
+  const validExtensions = [
+    'jpg', 'jpeg', 'png', 'webp', 'gif', 
+    'heic', 'heif', 'bmp', 'tif', 'tiff'
+  ];
+  
+  return validExtensions.includes(extension);
+}
+
+/**
+ * 檢查是否為有效的文件大小
+ * 
+ * @param size 文件大小 (位元組)
+ * @param maxSize 最大文件大小 (位元組，默認 20MB)
+ * @returns 是否為有效的文件大小
+ */
+export function isValidFileSize(size: number, maxSize: number = 20 * 1024 * 1024): boolean {
+  return size > 0 && size <= maxSize;
+}
+
+/**
+ * 格式化文件大小
+ * 
+ * @param bytes 文件大小 (位元組)
+ * @returns 格式化後的文件大小
+ */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  } else if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(2)} KB`;
+  } else if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  } else {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 } 

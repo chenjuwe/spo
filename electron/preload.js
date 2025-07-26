@@ -55,9 +55,13 @@ if (contextBridge && contextBridge.exposeInMainWorld) {
       },
       
       // 檔案對話框和操作 API
-      openFileDialog: async (options) => {
+      openFileDialog: async (options = {}) => {
         try {
-          return await ipcRenderer.invoke('open-file-dialog', options);
+          // 傳遞任務類型和其他選項
+          return await ipcRenderer.invoke('open-file-dialog', {
+            task: options?.task || 'select-files',
+            ...options
+          });
         } catch (error) {
           console.error('開啟檔案對話框錯誤:', error);
           throw error;
@@ -73,9 +77,14 @@ if (contextBridge && contextBridge.exposeInMainWorld) {
         }
       },
       
-      readFile: async (path) => {
+      readFile: async (path, options = {}) => {
         try {
-          const result = await ipcRenderer.invoke('read-file', path);
+          // 傳遞任務類型和檔案路徑
+          const result = await ipcRenderer.invoke('read-file', path, {
+            task: options?.task || 'read-file',
+            ...options
+          });
+          
           if (typeof result === 'object' && 'error' in result) {
             console.error('讀取文件錯誤:', result.error, result.message);
             return result;

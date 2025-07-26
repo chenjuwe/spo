@@ -149,10 +149,35 @@ export async function convertHeicToJpeg(file: File, options?: ProcessingTaskOpti
   }
   
   try {
+    // 檢查文件大小，過大的文件需要特殊處理
+    if (file.size > 5 * 1024 * 1024) { // 如果文件大於 5MB
+      console.log(`處理大型 HEIC 文件: ${file.name}，大小: ${(file.size / (1024 * 1024)).toFixed(2)}MB`);
+      
+      // 使用增強版的 HEIC 轉換器
+      const { convertHeicToJpegEnhanced } = await import('./enhancedHeicConverter');
+      
+      const result = await convertHeicToJpegEnhanced(file, {
+        quality: 80, // 降低一點質量以節省內存
+        maxWidth: 2500, // 最大寬度限制，可調整
+        maxHeight: 2500, // 最大高度限制，可調整
+        onProgress: (progress) => {
+          // 報告進度
+          options?.onProgress?.(progress);
+        },
+        signal: options?.signal
+      });
+      
+      return result.file;
+    }
+    
+    // 標準小文件處理
     const blob = await heic2any({ 
       blob: file, 
       toType: "image/jpeg", 
-      quality: 0.95 
+      quality: 0.9, // 降低一點質量以節省內存
+      // 小文件也做一下尺寸限制
+      maxWidth: 2000,
+      maxHeight: 2000
     });
     
     // 處理陣列或單一 blob
@@ -162,9 +187,28 @@ export async function convertHeicToJpeg(file: File, options?: ProcessingTaskOpti
       file.name.replace(/\.heic$/i, ".jpg"), 
       { type: "image/jpeg" }
     );
+    
+    // 釋放內存
+    URL.revokeObjectURL(URL.createObjectURL(jpegBlob));
+    
+    // 強制進行垃圾回收（如果可能）
+    if (typeof window.gc === 'function') {
+      try {
+        window.gc();
+      } catch (e) {
+        // 忽略錯誤
+      }
+    }
+    
     return jpegFile;
   } catch (error) {
+    // 捕獲並處理取消操作
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
+    }
+    
     const errorMsg = `HEIC 轉換失敗: ${file.name}`;
+    console.error('HEIC 轉換錯誤:', error);
     
     if (options?.onError) {
       options.onError(new Error(errorMsg));

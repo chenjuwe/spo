@@ -3,181 +3,176 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, Folder } from "lucide-react";
 import { toast } from "sonner";
+import { ErrorType, errorHandler, ErrorSeverity } from "../lib/errorHandlingService";
+import { PhotoFile } from "../lib/types";
 
-// 簡化函數 - 檢查是否在 Electron 環境中
-function isElectron(): boolean {
-  return window.electronAPI !== undefined;
+// 為 window 對象添加 electronAPI 類型
+declare global {
+  interface Window {
+    electronAPI?: {
+      openFileDialog: (options?: any) => Promise<string[]>;
+      readFile: (path: string, options?: any) => Promise<any>;
+      setTitle: (title: string) => void;
+      checkPhotosPermission: () => Promise<any>;
+      requestPhotosPermission: () => Promise<any>;
+      openPhotosLibrary: () => Promise<any>;
+    };
+  }
 }
 
-// 簡易照片數據接口
-interface PhotoData {
-  id: string;
-  name: string;
-  size: number;
-  type: string;
-  dataUrl: string;
-  lastModified: number;
-  dateAdded: string;
+// 檢查是否在 Electron 環境中
+function isElectron(): boolean {
+  return typeof window !== 'undefined' && window.electronAPI !== undefined;
 }
 
 // 簡化版的 PhotoUploader 組件
 const PhotoUploader = ({ 
-  onFilesAdded
+  onPhotosAdded
 }: {
-  onFilesAdded: (files: PhotoData[]) => void;
+  onPhotosAdded: (files: PhotoFile[]) => void;
 }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [hasPermissionError, setHasPermissionError] = useState(false);
-  const [hasPhotosLibraryError, setHasPhotosLibraryError] = useState(false);
   
   // 開啟檔案選擇對話框
   const handleFileSelect = async () => {
-    if (!isElectron() || !window.electronAPI || isUploading) return;
+    if (!isElectron() || isUploading) return;
     
     try {
       setIsUploading(true);
-      const filePaths = await window.electronAPI.openFileDialog();
+      toast.loading("正在開啟檔案選擇對話框...");
       
-      if (filePaths && filePaths.length > 0) {
-        await processSelectedFiles(filePaths);
+      // 使用 electronAPI 選擇檔案
+      const filePaths = await window.electronAPI!.openFileDialog();
+      
+      // 如果取消選擇，直接返回
+      if (!filePaths || filePaths.length === 0) {
+        toast.dismiss();
+        setIsUploading(false);
+        return;
       }
       
+      // 限制一次處理的檔案數量，避免內存問題
+      const maxFilesToProcess = 5;
+      const filesToProcess = filePaths.slice(0, maxFilesToProcess);
+      
+      if (filePaths.length > maxFilesToProcess) {
+        toast.warning(`選擇了 ${filePaths.length} 個檔案，但一次只能處理 ${maxFilesToProcess} 個`);
+      }
+      
+      // 處理所選檔案
+      const loadingToast = toast.loading(`處理中 0/${filesToProcess.length} 檔案...`);
+      const results: PhotoFile[] = [];
+      
+      for (let i = 0; i < filesToProcess.length; i++) {
+        const path = filesToProcess[i];
+        
+        try {
+          // 更新進度
+          toast.loading(`處理中 ${i+1}/${filesToProcess.length} 檔案...`, { id: loadingToast });
+          
+          // 使用 readFile 讀取檔案
+          const fileResult = await window.electronAPI!.readFile(path);
+          
+          // 處理可能的錯誤回應
+          if (typeof fileResult === 'object' && 'error' in fileResult) {
+            console.error(`無法讀取檔案: ${path}`, fileResult);
+            continue;
+          }
+          
+          // 從路徑獲取檔案名
+          const fileName = path.split(/[\\/]/).pop() || 'unknown';
+          
+          // 確定檔案類型
+          const fileType = fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ? 'image/jpeg' :
+                          fileName.endsWith('.png') ? 'image/png' :
+                          fileName.endsWith('.heic') ? 'image/heic' :
+                          fileName.endsWith('.gif') ? 'image/gif' : 'image/jpeg';
+          
+          // 創建 Blob 和 File 對象
+          const base64Data = String(fileResult);
+          const byteCharacters = atob(base64Data);
+          const byteArrays = [];
+          
+          // 分塊處理大檔案，避免內存溢出
+          const sliceSize = 512 * 1024; // 512KB 塊
+          for (let offset = 0; offset < byteCharacters.length; offset += sliceSize) {
+            const slice = byteCharacters.slice(offset, offset + sliceSize);
+            const byteNumbers = new Array(slice.length);
+            for (let i = 0; i < slice.length; i++) {
+              byteNumbers[i] = slice.charCodeAt(i);
+            }
+            byteArrays.push(new Uint8Array(byteNumbers));
+          }
+          
+          // 創建 Blob
+          const blob = new Blob(byteArrays, { type: fileType });
+          
+          // 創建檔案物件
+          const file = new File([blob], fileName, { type: fileType });
+          
+          // 創建符合 PhotoFile 類型的對象
+          const photoFile: PhotoFile = {
+            id: `photo-${Date.now()}-${i}`,
+            file: file,
+            preview: URL.createObjectURL(blob),
+            path: path
+          };
+          
+          results.push(photoFile);
+          
+          // 釋放資源
+          byteArrays.length = 0;
+          
+        } catch (error) {
+          console.error(`處理檔案錯誤 (${path}):`, error);
+        }
+      }
+      
+      // 顯示結果
+      toast.dismiss(loadingToast);
+      
+      if (results.length > 0) {
+        onPhotosAdded(results);
+        toast.success(`成功載入 ${results.length} 個檔案`);
+      } else {
+        toast.error("無法載入任何檔案");
+      }
     } catch (error) {
-      console.error('選擇檔案時出錯:', error);
-      toast.error('選擇檔案時發生錯誤');
+      console.error("選擇檔案時發生錯誤:", error);
+      
+      if (String(error).includes('permission') || String(error).includes('access')) {
+        setHasPermissionError(true);
+      }
+      
+      toast.error("選擇檔案時發生錯誤", { 
+        description: String(error).includes('permission') ? 
+          "可能是權限問題，請檢查應用權限設定" : "請稍後再試" 
+      });
     } finally {
       setIsUploading(false);
     }
   };
   
-  // 處理選擇的檔案
-  const processSelectedFiles = async (filePaths: string[]) => {
-    if (!window.electronAPI) return;
-    
-    const progressToast = toast.loading(`處理 ${filePaths.length} 個檔案...`);
-    let loadedCount = 0;
-    let errorCount = 0;
-    const results: PhotoData[] = [];
-    
-    for (const path of filePaths) {
-      try {
-        const fileResult = await window.electronAPI.readFile(path);
-        
-        // 處理錯誤結果
-        if (typeof fileResult === 'object' && 'error' in fileResult) {
-          errorCount++;
-          
-          if (fileResult.error === 'PHOTOS_LIBRARY_PERMISSION') {
-            setHasPhotosLibraryError(true);
-            toast.error('無法存取照片庫，需要特別權限', {
-              description: '請在系統設定中授權應用程式存取您的照片庫'
-            });
-          } else if (fileResult.error.includes('PERMISSION')) {
-            setHasPermissionError(true);
-            toast.error('檔案存取權限不足', {
-              description: fileResult.message || '請檢查應用程式權限'
-            });
-          }
-          
-          continue;
-        }
-        
-        // 處理成功讀取的檔案
-        const base64Data = String(fileResult);
-        const fileName = path.split(/[\\/]/).pop() || 'unknown.jpg';
-        const fileType = fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ? 'image/jpeg' :
-                       fileName.endsWith('.png') ? 'image/png' :
-                       fileName.endsWith('.gif') ? 'image/gif' : 'image/unknown';
-        
-        results.push({
-          id: Date.now() + '-' + loadedCount,
-          name: fileName,
-          size: base64Data.length,
-          type: fileType,
-          dataUrl: `data:${fileType};base64,${base64Data}`,
-          lastModified: Date.now(),
-          dateAdded: new Date().toISOString()
-        });
-        
-        loadedCount++;
-        
-      } catch (error) {
-        console.error('處理檔案時出錯:', error);
-        errorCount++;
-      }
-    }
-    
-    // 更新進度提示
-    if (errorCount > 0) {
-      toast.error(`處理完成: ${loadedCount} 成功, ${errorCount} 失敗`, { id: progressToast });
-    } else if (loadedCount > 0) {
-      toast.success(`成功載入 ${loadedCount} 個檔案`, { id: progressToast });
-    } else {
-      toast.error('無法載入任何檔案', { id: progressToast });
-    }
-    
-    // 將結果傳遞給父組件
-    if (results.length > 0) {
-      onFilesAdded(results);
-    }
-  };
-  
   return (
-    <Card className="p-6">
-      {/* 權限錯誤提示 */}
+    <Card className="p-10 flex flex-col items-center justify-center space-y-4">
+      <Button 
+        size="lg" 
+        variant="outline" 
+        className="flex items-center gap-2"
+        disabled={isUploading}
+        onClick={handleFileSelect}
+      >
+        <Folder className="h-5 w-5" />
+        {isUploading ? '處理中...' : '選擇照片'}
+      </Button>
+      
       {hasPermissionError && (
-        <div className="mb-4 p-4 border border-amber-200 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 rounded-md">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
-            <div>
-              <h4 className="font-medium text-amber-800">檔案存取權限不足</h4>
-              <p className="text-sm mt-1 text-amber-700">
-                請前往「系統設定」→「隱私權與安全性」→「檔案和資料夾」，
-                確保已允許「Smart Photo Organizer」存取您的檔案。
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-2 bg-amber-100 border-amber-300"
-                onClick={() => {
-                  if (isElectron() && window.electronAPI) {
-                    window.electronAPI.setTitle('open-privacy-settings');
-                  }
-                }}
-              >
-                開啟系統設定
-              </Button>
-            </div>
-          </div>
+        <div className="flex items-center text-amber-600 bg-amber-50 p-2 rounded-md text-sm">
+          <AlertTriangle className="h-4 w-4 mr-2" />
+          <span>檔案存取權限不足，請檢查系統權限設定</span>
         </div>
       )}
-      
-      {/* 照片庫錯誤提示 */}
-      {hasPhotosLibraryError && (
-        <div className="mb-4 p-4 border border-amber-200 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 rounded-md">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
-            <div>
-              <h4 className="font-medium text-amber-800">照片庫存取受限</h4>
-              <p className="text-sm mt-1 text-amber-700">
-                macOS 安全機制限制直接存取照片庫。建議先使用「照片」應用程式將照片匯出到一般資料夾後再處理。
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* 檔案選擇按鈕 */}
-      <div className="text-center">
-        <Button
-          onClick={handleFileSelect}
-          disabled={isUploading}
-          className="mx-auto"
-        >
-          <Folder className="w-4 h-4 mr-2" />
-          {isUploading ? '處理中...' : '選擇照片'}
-        </Button>
-      </div>
     </Card>
   );
 };

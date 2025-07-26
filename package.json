@@ -1,7 +1,7 @@
 {
   "name": "spo",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "main": "electron/main.js",
   "exports": {
@@ -175,7 +175,7 @@
     "rollup-plugin-visualizer": "^6.0.3",
     "tailwindcss": "^3.4.11",
     "ts-jest": "^29.4.0",
-    "typescript": "^5.5.3",
+    "typescript": "^5.8.3",
     "typescript-eslint": "^8.0.1",
     "vite": "^5.4.1",
     "vite-bundle-visualizer": "^1.2.1",

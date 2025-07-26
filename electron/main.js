@@ -454,9 +454,9 @@ function handleFilePermissionError(filePath, error) {
 }
 
 // 處理選擇本地照片
-ipcMain.handle('open-file-dialog', async () => {
+ipcMain.handle('open-file-dialog', async (event, options = {}) => {
   try {
-    console.log('正在開啟檔案選擇對話框');
+    console.log('正在開啟檔案選擇對話框，任務類型:', options?.task || '未指定');
     
     // 使用系統對話框選擇檔案 (不需要額外權限)
     const result = await dialog.showOpenDialog({
@@ -539,8 +539,11 @@ ipcMain.handle('open-photos-library', async () => {
 });
 
 // 修改檔案讀取邏輯，嘗試檢測是否為照片庫中的檔案
-ipcMain.handle('read-file', async (event, filePath) => {
+ipcMain.handle('read-file', async (event, filePath, options = {}) => {
   try {
+    const taskType = options?.task || '未指定';
+    console.log(`開始讀取文件，任務類型: ${taskType}, 文件路徑: ${filePath}`);
+    
     if (!fs.existsSync(filePath)) {
       return { error: 'FILE_NOT_EXIST', message: '檔案不存在' };
     }
