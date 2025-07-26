@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { HashResult, HashType } from './types';
+import { errorHandler, ErrorType, ErrorSeverity } from './errorHandlingService';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -234,4 +235,62 @@ export function cosineSimilarity(vecA: number[], vecB: number[]): number {
   
   if (normA === 0 || normB === 0) return 0;
   return dot / (normA * normB);
+}
+
+/**
+ * 統一的錯誤處理工具函數
+ * 用於簡化錯誤處理流程並確保類型安全
+ * 
+ * @param error 錯誤對象或錯誤訊息
+ * @param type 錯誤類型
+ * @param details 錯誤詳細資訊
+ * @param recoverable 是否可恢復
+ * @param recoveryAction 恢復動作
+ * @param severity 錯誤嚴重程度
+ * @returns 錯誤ID
+ */
+export function handleError(
+  error: unknown,
+  type: ErrorType = ErrorType.UNKNOWN_ERROR,
+  details?: string,
+  recoverable: boolean = false,
+  recoveryAction?: () => void,
+  severity: ErrorSeverity = ErrorSeverity.MEDIUM
+): string {
+  // 確保錯誤是 Error 類型
+  const errorObj = error instanceof Error 
+    ? error 
+    : new Error(typeof error === 'string' ? error : String(error));
+  
+  return errorHandler.handleError(
+    errorObj,
+    type,
+    details,
+    recoverable,
+    recoveryAction,
+    severity
+  );
+}
+
+/**
+ * 與錯誤處理集成的異步函數包裝器
+ * 
+ * @param fn 要執行的異步函數
+ * @param errorType 發生錯誤時的類型
+ * @param errorMessage 錯誤訊息
+ * @returns 包裝後的函數
+ */
+export function withErrorHandlingAsync<T, Args extends any[]>(
+  fn: (...args: Args) => Promise<T>,
+  errorType: ErrorType,
+  errorMessage: string
+): (...args: Args) => Promise<T | null> {
+  return async (...args: Args): Promise<T | null> => {
+    try {
+      return await fn(...args);
+    } catch (error) {
+      handleError(error, errorType, errorMessage);
+      return null;
+    }
+  };
 }

@@ -1,266 +1,227 @@
-import { useState, useRef } from 'react';
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { ProcessingStatus } from "./ProcessingStatus";
-import { Play, CheckCircle } from "lucide-react";
-import { toast } from "sonner";
-import { 
-  PhotoFile, 
-  ProcessingStep, 
-  SimilarityGroup,
-  ProcessingTaskOptions
-} from "@/lib/types";
-import {
-  analyzePhotosQuality,
-  calculatePhotosHash,
-  calculatePhotosAllHashes,
-  groupSimilarPhotosWithAdjustment
-} from "@/lib/imageProcessingService";
+import React, { useState, useCallback, useEffect } from 'react';
+import { PhotoFile } from '../lib/types';
+import { MultiLevelFeature, FeatureLevel } from '../lib/multiLevelFeatureFusion';
+import { featureManager } from '../lib/featureManager';
+import { validatePhotoBatch, ValidationErrorType } from '../lib/inputValidator';
+import { handleError } from '../lib/utils';
+import { ErrorType } from '../lib/errorHandlingService';
+import { unwrapAsync, unwrapOrAsync } from '../lib/result';
+import { Button } from './ui/button';
 
-interface PhotoProcessorProps {
-  photos: PhotoFile[];
-  onProcessingComplete: (processedPhotos: PhotoFile[], similarityGroups: SimilarityGroup[]) => void;
-  similarityThreshold: number;
+// 更新 ProcessingStatus 組件的 Props 接口
+interface ProcessingStatusProps {
+  progress: number;
+  total: number;
+  processed: number;
+  errors: number;
 }
 
-export const PhotoProcessor = ({ 
-  photos, 
-  onProcessingComplete,
-  similarityThreshold
-}: PhotoProcessorProps) => {
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [processingSteps, setProcessingSteps] = useState<ProcessingStep[]>([
-    { name: "分析照片品質", status: 'pending', progress: 0 },
-    { name: "計算照片特徵", status: 'pending', progress: 0 },
-    { name: "分析相似性", status: 'pending', progress: 0 },
-    { name: "挑選最佳照片", status: 'pending', progress: 0 },
-    { name: "準備結果", status: 'pending', progress: 0 }
-  ]);
-  
-  // 用於取消處理操作
-  const abortControllerRef = useRef<AbortController | null>(null);
-  
-  const handleProcessingProgress = (step: number, progress: number) => {
-    setProcessingSteps(prev => prev.map((s, idx) => 
-      idx === step ? { ...s, progress } : s
-    ));
-  };
-
-  const handleStepComplete = (step: number) => {
-    setProcessingSteps(prev => prev.map((s, idx) => 
-      idx === step ? { ...s, status: 'completed', progress: 100 } : s
-    ));
-  };
-
-  const handleStepError = (step: number, error: string) => {
-    setProcessingSteps(prev => prev.map((s, idx) => 
-      idx === step ? { ...s, status: 'error', error } : s
-    ));
-  };
-  
-  const handleCancel = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-      toast.info("處理已取消");
-      setIsProcessing(false);
-    }
-  };
-
-  const startProcessing = async () => {
-    if (photos.length === 0) {
-      toast.error("請先選擇照片");
-      return;
-    }
-
-    try {
-      setIsProcessing(true);
-      
-      // 每次開始處理時重置步驟狀態
-      setProcessingSteps(prev => prev.map(step => ({
-        ...step,
-        status: 'pending',
-        progress: 0,
-        error: undefined
-      })));
-      
-      // 創建新的 AbortController 用於取消處理
-      abortControllerRef.current = new AbortController();
-      const signal = abortControllerRef.current.signal;
-      
-      // 1. 分析照片品質
-      setCurrentStep(0);
-      setProcessingSteps(prev => prev.map((step, idx) => ({
-        ...step,
-        status: idx === 0 ? 'processing' : 'pending'
-      })));
-      
-      const taskOptions: ProcessingTaskOptions = {
-        onProgress: (progress) => handleProcessingProgress(0, progress),
-        onError: (error) => handleStepError(0, error.message),
-        signal
-      };
-
-      const processedPhotos = [...photos];
-      const qualityMap = await analyzePhotosQuality(processedPhotos, taskOptions);
-      
-      // 更新每張照片的品質信息
-      for (const photo of processedPhotos) {
-        const quality = qualityMap.get(photo.id);
-        if (quality) {
-          photo.quality = quality;
-        }
-      }
-
-      handleStepComplete(0);
-      
-      // 2. 計算多種哈希值
-      setCurrentStep(1);
-      setProcessingSteps(prev => prev.map((step, idx) => ({
-        ...step,
-        status: idx === 1 ? 'processing' : step.status
-      })));
-      
-      taskOptions.onProgress = (progress) => handleProcessingProgress(1, progress);
-      taskOptions.onError = (error) => handleStepError(1, error.message);
-      
-      // 使用多哈希計算
-      const hashMap = await calculatePhotosAllHashes(processedPhotos, taskOptions);
-      
-      // 更新每張照片的哈希
-      for (const photo of processedPhotos) {
-        const hashes = hashMap.get(photo.id);
-        if (hashes) {
-          photo.hashes = hashes;
-          photo.hash = hashes.pHash; // 向下兼容
-        }
-      }
-
-      handleStepComplete(1);
-      
-      // 3. 分析相似性並分組
-      setCurrentStep(2);
-      setProcessingSteps(prev => prev.map((step, idx) => ({
-        ...step,
-        status: idx === 2 ? 'processing' : step.status
-      })));
-      
-      taskOptions.onProgress = (progress) => handleProcessingProgress(2, progress);
-      taskOptions.onError = (error) => handleStepError(2, error.message);
-      
-      // 使用考慮亮度和對比度的相似度分析
-      const groups = await groupSimilarPhotosWithAdjustment(
-        processedPhotos,
-        taskOptions
-      );
-
-      handleStepComplete(2);
-      
-      // 4. 挑選最佳照片
-      setCurrentStep(3);
-      setProcessingSteps(prev => prev.map((step, idx) => ({
-        ...step,
-        status: idx === 3 ? 'processing' : step.status
-      })));
-      
-      // 標記分組照片
-      for (const group of groups) {
-        for (const photoId of group.photos) {
-          const photoIndex = processedPhotos.findIndex(p => p.id === photoId);
-          if (photoIndex !== -1) {
-            processedPhotos[photoIndex].group = group.id;
-          }
-        }
-      }
-
-      // 模擬處理時間
-      for (let progress = 0; progress <= 100; progress += 20) {
-        if (signal.aborted) break;
-        handleProcessingProgress(3, progress);
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-
-      handleStepComplete(3);
-      
-      // 5. 準備結果
-      setCurrentStep(4);
-      setProcessingSteps(prev => prev.map((step, idx) => ({
-        ...step,
-        status: idx === 4 ? 'processing' : step.status
-      })));
-      
-      // 模擬準備時間
-      for (let progress = 0; progress <= 100; progress += 20) {
-        if (signal.aborted) break;
-        handleProcessingProgress(4, progress);
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-
-      handleStepComplete(4);
-      
-      // 處理完成
-      onProcessingComplete(processedPhotos, groups);
-      
-      const duplicateCount = groups.reduce((sum, group) => sum + group.photos.length - 1, 0);
-      toast.success(`處理完成！找到 ${groups.length} 個重複分組，將移除 ${duplicateCount} 張重複照片`);
-    } catch (error) {
-      const errorMessage = error instanceof DOMException && error.name === 'AbortError'
-        ? '處理已取消'
-        : '處理照片時發生錯誤，請重試';
-      
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        // 已通過 handleCancel 處理訊息
-      } else {
-        console.error("處理照片時發生錯誤:", error);
-        toast.error(errorMessage);
-      }
-    } finally {
-      setIsProcessing(false);
-      abortControllerRef.current = null;
-    }
-  };
-
+// 簡化的 ProcessingStatus 組件
+export const ProcessingStatus: React.FC<ProcessingStatusProps> = ({
+  progress,
+  total,
+  processed,
+  errors
+}) => {
   return (
-    <>
-      {isProcessing && (
-        <ProcessingStatus
-          steps={processingSteps}
-          currentStep={currentStep}
-          onCancel={handleCancel}
+    <div className="mt-4 p-4 bg-slate-100 rounded-md">
+      <div className="w-full h-2 bg-slate-200 rounded-full mb-2">
+        <div 
+          className="h-full bg-blue-600 rounded-full" 
+          style={{ width: `${progress}%` }}
         />
-      )}
-      
-      <Card className="p-6">
-        <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <h3 className="font-semibold">準備開始整理照片</h3>
-            <p className="text-sm text-muted-foreground">
-              將分析照片相似性並自動挑選最佳版本
-            </p>
-          </div>
-          <Button
-            onClick={startProcessing}
-            disabled={isProcessing || photos.length === 0}
-            size="lg"
-            className="px-8"
-          >
-            {isProcessing ? (
-              <>
-                <div className="w-4 h-4 mr-2 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                處理中...
-              </>
-            ) : (
-              <>
-                <Play className="w-4 h-4 mr-2" />
-                開始整理
-              </>
-            )}
-          </Button>
-        </div>
-      </Card>
-    </>
+      </div>
+      <div className="flex justify-between text-sm">
+        <span>進度: {progress}%</span>
+        <span>已處理: {processed}/{total}</span>
+        {errors > 0 && <span className="text-red-500">錯誤: {errors}</span>}
+      </div>
+    </div>
   );
 };
 
-export default PhotoProcessor; 
+interface PhotoProcessorProps {
+  photos: PhotoFile[];
+  onProcessed: (processedPhotos: PhotoFile[]) => void;
+  onFeatureExtracted: (features: Record<string, MultiLevelFeature>) => void;
+}
+
+export const PhotoProcessor: React.FC<PhotoProcessorProps> = ({
+  photos,
+  onProcessed,
+  onFeatureExtracted
+}) => {
+  const [processing, setProcessing] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [processedCount, setProcessedCount] = useState(0);
+  const [errorCount, setErrorCount] = useState(0);
+  const [features, setFeatures] = useState<Record<string, MultiLevelFeature>>({});
+  
+  // 初始化特徵管理器
+  useEffect(() => {
+    const initManager = async () => {
+      try {
+        await unwrapAsync(featureManager.initialize());
+        console.info('特徵管理器初始化成功');
+      } catch (error) {
+        handleError(
+          error,
+          ErrorType.SYSTEM_ERROR,
+          '特徵管理器初始化失敗',
+          false
+        );
+      }
+    };
+    
+    initManager();
+    
+    // 組件卸載時釋放資源
+    return () => {
+      featureManager.dispose();
+    };
+  }, []);
+  
+  const processPhotos = useCallback(async () => {
+    if (photos.length === 0 || processing) return;
+    
+    setProcessing(true);
+    setProgress(0);
+    setProcessedCount(0);
+    setErrorCount(0);
+    
+    try {
+      // 驗證照片
+      const { validPhotos, errors } = validatePhotoBatch(photos);
+      
+      if (errors.length > 0) {
+        console.warn(`${errors.length} 個照片驗證失敗`);
+        errors.forEach(({ photo, error }) => {
+          console.warn(
+            `照片 ${photo.id} 驗證失敗: ${error.message}`,
+            error.details
+          );
+        });
+        
+        setErrorCount(errors.length);
+      }
+      
+      if (validPhotos.length === 0) {
+        handleError(
+          new Error('沒有有效的照片可處理'),
+          ErrorType.INPUT_ERROR,
+          '請上傳有效的照片',
+          true
+        );
+        setProcessing(false);
+        return;
+      }
+      
+      // 處理有效照片
+      const totalPhotos = validPhotos.length;
+      const newFeatures: Record<string, MultiLevelFeature> = {};
+      
+      // 按批次處理照片，避免阻塞 UI
+      const batchSize = 5;
+      
+      for (let i = 0; i < totalPhotos; i += batchSize) {
+        const batch = validPhotos.slice(i, i + batchSize);
+        
+        // 並行處理批次中的照片
+        const batchPromises = batch.map(async (photo) => {
+          try {
+            // 提取特徵 (使用多級別特徵融合)
+            const lowFeatureResult = await featureManager.extractAndCacheFeature(
+              photo,
+              FeatureLevel.LOW
+            );
+            
+            const midFeatureResult = await featureManager.extractAndCacheFeature(
+              photo,
+              FeatureLevel.MID
+            );
+            
+            let highFeature: MultiLevelFeature | null = null;
+            
+            // 僅在需要時提取高級特徵 (深度學習)
+            if (totalPhotos <= 100) {
+              highFeature = await unwrapOrAsync(
+                featureManager.extractAndCacheFeature(photo, FeatureLevel.HIGH),
+                null
+              );
+            }
+            
+            // 合併特徵
+            const lowFeature = await unwrapOrAsync(lowFeatureResult, null);
+            const midFeature = await unwrapOrAsync(midFeatureResult, null);
+            
+            if (!lowFeature && !midFeature && !highFeature) {
+              throw new Error(`無法提取照片 ${photo.id} 的特徵`);
+            }
+            
+            // 創建完整的多級特徵
+            const feature: MultiLevelFeature = {
+              id: photo.id,
+              lowLevelFeatures: lowFeature?.lowLevelFeatures,
+              midLevelFeatures: midFeature?.midLevelFeatures,
+              highLevelFeatures: highFeature?.highLevelFeatures,
+              metadata: { photo }
+            };
+            
+            newFeatures[photo.id] = feature;
+            return photo;
+          } catch (error) {
+            console.error(`處理照片 ${photo.id} 時發生錯誤:`, error);
+            setErrorCount(prev => prev + 1);
+            return null;
+          }
+        });
+        
+        // 等待批次完成
+        const processedBatch = (await Promise.all(batchPromises)).filter(Boolean) as PhotoFile[];
+        setProcessedCount(prev => prev + processedBatch.length);
+        setProgress(Math.round(((i + batch.length) / totalPhotos) * 100));
+        
+        // 小暫停，讓 UI 有機會更新
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      
+      // 完成處理
+      setFeatures(newFeatures);
+      onFeatureExtracted(newFeatures);
+      onProcessed(validPhotos.filter(photo => newFeatures[photo.id]));
+    } catch (error) {
+      handleError(
+        error,
+        ErrorType.SYSTEM_ERROR,
+        '處理照片時發生錯誤',
+        true
+      );
+    } finally {
+      setProcessing(false);
+      setProgress(100);
+    }
+  }, [photos, processing, onProcessed, onFeatureExtracted]);
+  
+  return (
+    <div className="photo-processor">
+      <div className="mb-4">
+        <Button
+          onClick={processPhotos}
+          disabled={processing || photos.length === 0}
+          className="bg-blue-600 hover:bg-blue-700 text-white"
+        >
+          {processing ? '處理中...' : '處理照片'}
+        </Button>
+      </div>
+      
+      {processing && (
+        <ProcessingStatus 
+          progress={progress}
+          total={photos.length}
+          processed={processedCount}
+          errors={errorCount}
+        />
+      )}
+    </div>
+  );
+}; 

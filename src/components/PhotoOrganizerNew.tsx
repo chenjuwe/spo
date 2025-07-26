@@ -1,21 +1,14 @@
-import React, { Suspense, lazy, useState, useEffect, useMemo } from "react";
-import { Card } from "@/components/ui/card";
+import React, { Suspense, lazy, useState, useMemo } from "react";
 import { PhotoProvider, usePhotos, useResults } from "@/context/PhotoContext";
 import { SimilarityGroup, ProcessingOptions } from "@/lib/types";
-import { checkBrowserCompatibility, showCompatibilityWarnings } from "@/lib/compatibilityChecker";
 import { useKeyboardShortcuts, KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
-import { setupGlobalErrorHandler } from "@/lib/errorHandlingService";
-import { hashCache } from "@/lib/hashCacheService";
 
-// 動態載入大型元件以減少初始載入時間
-const PhotoGrid = lazy(() => import("./PhotoGrid"));
+// 動態載入元件
+import AppInitializer from "./AppInitializer";
+const MainContent = lazy(() => import("./MainContent"));
 const SettingsPanel = lazy(() => import("./SettingsPanel"));
-const ResultsView = lazy(() => import("./ResultsView"));
 const KeyboardShortcutHelp = lazy(() => import("./KeyboardShortcutHelp"));
-const DownloadProgress = lazy(() => import("./DownloadProgress"));
-const PhotoUploader = lazy(() => import("./PhotoUploader"));
-const PhotoProcessor = lazy(() => import("./PhotoProcessor"));
-const Header = lazy(() => import("./Header"));
+const AppHeader = lazy(() => import("./AppHeader"));
 
 // 懶加載外殼組件
 const LazyComponent: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -24,32 +17,12 @@ const LazyComponent: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   </Suspense>
 );
 
-// 應用初始化組件
-const AppInitializer: React.FC = () => {
-  useEffect(() => {
-    // 檢查瀏覽器相容性
-    const compatibility = checkBrowserCompatibility();
-    if (!compatibility.isCompatible) {
-      showCompatibilityWarnings();
-    }
-    
-    // 設置全局錯誤處理
-    setupGlobalErrorHandler();
-    
-    // 預熱緩存
-    hashCache.preloadCache().catch(e => 
-      console.warn("緩存預熱失敗:", e)
-    );
-  }, []);
-  
-  return null;
-};
-
 // 主應用組件
 const PhotoOrganizerApp: React.FC = () => {
-  // 狀態
+  // 狀態管理
   const [showSettings, setShowSettings] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showClassifier, setShowClassifier] = useState(false);
   const [similarityThreshold, setSimilarityThreshold] = useState(90);
   const [similarityGroups, setSimilarityGroups] = useState<SimilarityGroup[]>([]);
   const [settings, setSettings] = useState<ProcessingOptions>({
@@ -60,7 +33,7 @@ const PhotoOrganizerApp: React.FC = () => {
   });
 
   // 獲取 Context 數據
-  const { photos, clearPhotos } = usePhotos();
+  const { photos, setPhotos, clearPhotos } = usePhotos();
   const { showResults, setShowResults } = useResults();
 
   // 定義鍵盤快捷鍵
@@ -77,6 +50,12 @@ const PhotoOrganizerApp: React.FC = () => {
       action: () => setShowSettings(!showSettings),
       description: "開啟/關閉設定面板"
     },
+    classifier: {
+      key: "t",
+      ctrlKey: true,
+      action: () => setShowClassifier(!showClassifier),
+      description: "開啟/關閉分類和標籤面板"
+    },
     clear: {
       key: "Delete",
       ctrlKey: true,
@@ -88,30 +67,54 @@ const PhotoOrganizerApp: React.FC = () => {
       action: () => {
         if (showSettings) setShowSettings(false);
         if (showShortcuts) setShowShortcuts(false);
+        if (showClassifier) setShowClassifier(false);
       },
       description: "關閉當前彈出窗口"
     }
-  }), [photos.length, clearPhotos, showSettings, setShowSettings, showShortcuts, setShowShortcuts]);
+  }), [photos.length, clearPhotos, showSettings, setShowSettings, showShortcuts, setShowShortcuts, showClassifier, setShowClassifier]);
 
   // 啟用鍵盤快捷鍵
   useKeyboardShortcuts(shortcuts);
 
   // 處理完成處理
-  const handleProcessingComplete = (processedGroups: SimilarityGroup[]) => {
-    setSimilarityGroups(processedGroups);
+  const handleProcessingComplete = (groups: SimilarityGroup[]) => {
+    setSimilarityGroups(groups);
     setShowResults(true);
   };
+
+  // 創建鍵盤快捷鍵分類
+  const shortcutCategories = useMemo(() => ({
+    general: {
+      title: "一般操作",
+      shortcuts: {
+        help: shortcuts.help,
+        settings: shortcuts.settings,
+        escape: shortcuts.escape
+      }
+    },
+    photos: {
+      title: "照片操作",
+      shortcuts: {
+        classifier: shortcuts.classifier,
+        clear: shortcuts.clear
+      }
+    }
+  }), [shortcuts]);
 
   return (
     <div className="container mx-auto py-6 space-y-6">
       {/* 頭部區域 */}
       <LazyComponent>
-        <Header
+        <AppHeader
           showSettings={showSettings}
           setShowSettings={setShowSettings}
           setShowShortcuts={setShowShortcuts}
+          setShowClassifier={setShowClassifier}
           settings={settings}
           similarityGroups={similarityGroups}
+          photosCount={photos.length}
+          shortcuts={shortcuts}
+          photos={photos}
         />
       </LazyComponent>
 
@@ -122,52 +125,30 @@ const PhotoOrganizerApp: React.FC = () => {
             settings={settings}
             onSettingsChange={setSettings}
             similarityThreshold={similarityThreshold}
-            onSimilarityChange={setSimilarityThreshold}
+            onSimilarityThresholdChange={setSimilarityThreshold}
+            onClose={() => setShowSettings(false)}
           />
         </LazyComponent>
       )}
-
-      {/* 主區域 */}
-      <Card className="p-6">
-        {!showResults ? (
-          <div className="space-y-6">
-            {/* 上傳區域 */}
-            <LazyComponent>
-              <PhotoUploader />
-            </LazyComponent>
-
-            {/* 當有照片時顯示照片網格和處理選項 */}
-            {photos.length > 0 && (
-              <>
-                <LazyComponent>
-                  <PhotoGrid photos={photos} onPhotosChange={() => {}} />
-                </LazyComponent>
-                
-                <LazyComponent>
-                  <PhotoProcessor
-                    threshold={similarityThreshold}
-                    onComplete={handleProcessingComplete}
-                  />
-                </LazyComponent>
-              </>
-            )}
-          </div>
-        ) : (
-          /* 結果顯示區域 */
-          <LazyComponent>
-            <ResultsView
-              similarityGroups={similarityGroups}
-              threshold={similarityThreshold}
-            />
-          </LazyComponent>
-        )}
-      </Card>
+      
+      {/* 主要內容區域 */}
+      <LazyComponent>
+        <MainContent
+          showResults={showResults}
+          photos={photos}
+          setPhotos={setPhotos}
+          similarityGroups={similarityGroups}
+          similarityThreshold={similarityThreshold}
+          setShowResults={setShowResults}
+          onProcessingComplete={handleProcessingComplete}
+        />
+      </LazyComponent>
 
       {/* 鍵盤快捷鍵幫助 */}
       {showShortcuts && (
         <LazyComponent>
           <KeyboardShortcutHelp
-            shortcuts={Object.values(shortcuts)}
+            shortcuts={shortcutCategories}
             onClose={() => setShowShortcuts(false)}
           />
         </LazyComponent>

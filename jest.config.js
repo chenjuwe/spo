@@ -11,8 +11,10 @@ export default {
   transform: {
     '^.+\\.(ts|tsx)$': ['ts-jest', {
       tsconfig: 'tsconfig.app.json',
+      useESM: true,
     }],
   },
+  extensionsToTreatAsEsm: ['.ts', '.tsx'],
   setupFilesAfterEnv: ['<rootDir>/src/setupTests.js'],
   testMatch: [
     '<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}'

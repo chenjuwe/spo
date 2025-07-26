@@ -11,6 +11,8 @@ export interface PhotoFile {
   hash?: string;
   hashes?: HashResult; // 新增支援多種哈希類型
   path?: string; // 原始路徑
+  tags?: string[]; // 照片標籤 ID 列表
+  category?: string; // 照片分類 ID
 }
 
 export interface ImageQuality {
@@ -63,4 +65,19 @@ export interface SimilarityThresholds {
   histogram: number; // 顏色直方圖相似度閾值 (0-1)
   hash: number;      // 哈希相似度閾值 (0-100)
   feature: number;   // 特徵向量相似度閾值 (0-1)
+}
+
+// 照片標籤類型
+export interface PhotoTag {
+  id: string;
+  name: string;
+  color: string;
+}
+
+// 照片分類類型
+export interface PhotoCategory {
+  id: string;
+  name: string;
+  description?: string;
+  color: string;
 } 

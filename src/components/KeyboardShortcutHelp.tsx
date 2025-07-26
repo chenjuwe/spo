@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { KeyboardShortcut, formatShortcutKey } from "@/hooks/useKeyboardShortcuts";
@@ -11,25 +11,37 @@ interface ShortcutCategory {
 
 interface KeyboardShortcutHelpProps {
   shortcuts: Record<string, ShortcutCategory>;
+  onClose?: () => void;
 }
 
-export const KeyboardShortcutHelp = ({ shortcuts }: KeyboardShortcutHelpProps) => {
+export const KeyboardShortcutHelp = ({ shortcuts, onClose }: KeyboardShortcutHelpProps) => {
   const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    setIsOpen(true);
+    
+    // 清理函數，當組件卸載時關閉對話框
+    return () => {
+      setIsOpen(false);
+    };
+  }, []);
+  
+  const handleClose = () => {
+    setIsOpen(false);
+    if (onClose) {
+      // 使用setTimeout確保對話框動畫完成
+      setTimeout(onClose, 150);
+    }
+  };
 
   return (
     <>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => setIsOpen(true)}
-        aria-label="鍵盤快捷鍵說明"
-        className="flex items-center gap-1 text-xs"
-      >
-        <KeyboardIcon className="w-4 h-4" />
-        <span>快捷鍵</span>
-      </Button>
-
-      <Dialog open={isOpen} onOpenChange={setIsOpen}>
+      <Dialog open={isOpen} onOpenChange={(open) => {
+        setIsOpen(open);
+        if (!open && onClose) {
+          setTimeout(onClose, 150);
+        }
+      }}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -40,7 +52,7 @@ export const KeyboardShortcutHelp = ({ shortcuts }: KeyboardShortcutHelpProps) =
               variant="ghost"
               size="sm"
               className="absolute right-4 top-4"
-              onClick={() => setIsOpen(false)}
+              onClick={handleClose}
             >
               <X className="w-4 h-4" />
             </Button>

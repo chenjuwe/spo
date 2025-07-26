@@ -1,9 +1,10 @@
 // 引入擴展斷言
 import '@testing-library/jest-dom';
+import { vi } from 'vitest';
 
 // 模擬全局瀏覽器對象
-global.URL.createObjectURL = jest.fn(() => 'mock-url');
-global.URL.revokeObjectURL = jest.fn();
+global.URL.createObjectURL = vi.fn(() => 'mock-url');
+global.URL.revokeObjectURL = vi.fn();
 
 // 模擬 IntersectionObserver
 class MockIntersectionObserver {

@@ -1,334 +1,298 @@
 import { toast } from "sonner";
 
 /**
- * 應用錯誤類型枚舉
+ * 錯誤處理服務
+ * 集中處理應用程序錯誤，支持日誌記錄和遙測上報
+ */
+
+/**
+ * 錯誤類型枚舉
  */
 export enum ErrorType {
   // 系統錯誤
-  SYSTEM_ERROR = "system_error",
-  NETWORK_ERROR = "network_error",
-  DATABASE_ERROR = "database_error",
+  SYSTEM_ERROR = 'SYSTEM_ERROR',
+  
+  // 網絡錯誤
+  NETWORK_ERROR = 'NETWORK_ERROR',
   
   // 照片處理錯誤
-  PHOTO_PROCESSING_ERROR = "photo_processing_error",
-  PHOTO_LOADING_ERROR = "photo_loading_error",
-  PHOTO_SAVING_ERROR = "photo_saving_error",
-  PHOTO_FORMAT_ERROR = "photo_format_error",
+  PHOTO_PROCESSING_ERROR = 'PHOTO_PROCESSING_ERROR',
   
-  // 檔案操作錯誤
-  FILE_ACCESS_ERROR = "file_access_error",
-  FILE_SIZE_ERROR = "file_size_error",
-  FILE_TYPE_ERROR = "file_type_error",
+  // 照片提取特徵錯誤
+  PHOTO_EXTRACTION_ERROR = 'PHOTO_EXTRACTION_ERROR',
   
-  // 記憶體相關錯誤
-  MEMORY_LIMIT_ERROR = "memory_limit_error",
-  WORKER_CRASH_ERROR = "worker_crash_error",
+  // 文件系統錯誤
+  FILE_SYSTEM_ERROR = 'FILE_SYSTEM_ERROR',
   
-  // 資源錯誤
-  RESOURCE_LIMIT_ERROR = "resource_limit_error",
-  
-  // 功能支援錯誤
-  UNSUPPORTED_BROWSER_ERROR = "unsupported_browser_error",
-  UNSUPPORTED_FEATURE_ERROR = "unsupported_feature_error",
+  // 用戶輸入錯誤
+  INPUT_ERROR = 'INPUT_ERROR',
   
   // 未知錯誤
-  UNKNOWN_ERROR = "unknown_error"
+  UNKNOWN_ERROR = 'UNKNOWN_ERROR'
 }
 
 /**
- * 應用錯誤介面
+ * 錯誤嚴重程度枚舉
  */
-export interface AppError {
-  type: ErrorType;
-  message: string;
-  details: string | undefined;
-  timestamp: Date;
-  recoverable: boolean;
-  recoveryAction: (() => void) | undefined;
-  technicalDetails: unknown | undefined;
-  browserInfo?: {
-    name: string;
-    version: string;
-    os: string;
-  };
+export enum ErrorSeverity {
+  // 低嚴重度 - 警告，不會影響核心功能
+  LOW = 'LOW',
+  
+  // 中等嚴重度 - 錯誤，可能影響部分功能
+  MEDIUM = 'MEDIUM',
+  
+  // 高嚴重度 - 嚴重錯誤，會影響核心功能
+  HIGH = 'HIGH',
+  
+  // 致命錯誤 - 導致應用崩潰或無法使用
+  FATAL = 'FATAL'
 }
 
 /**
- * 錯誤處理服務
+ * 應用錯誤接口
+ */
+export interface AppError extends Error {
+  // 錯誤類型
+  type: ErrorType;
+  
+  // 詳細信息
+  details?: string;
+  
+  // 時間戳
+  timestamp: Date;
+  
+  // 是否可恢復
+  recoverable: boolean;
+  
+  // 恢復操作
+  recoveryAction?: () => void;
+  
+  // 嚴重程度
+  severity: ErrorSeverity;
+  
+  // 技術細節
+  technicalDetails?: any;
+}
+
+/**
+ * 錯誤處理服務類
  */
 class ErrorHandlingService {
-  private errors: AppError[] = [];
-  private errorListeners: ((error: AppError) => void)[] = [];
+  /**
+   * 重試次數映射
+   */
+  private retryMap: Map<string, number> = new Map();
   
   /**
-   * 處理錯誤
-   * @param error 錯誤對象或字符串
+   * 遙測隊列
+   */
+  private telemetryQueue: Array<{
+    error: Error | string;
+    type: ErrorType;
+    details?: string;
+    timestamp: Date;
+    severity: ErrorSeverity;
+  }> = [];
+  
+  /**
+   * 創建自定義應用錯誤
+   * 
+   * @param error 原始錯誤或錯誤信息
    * @param type 錯誤類型
    * @param details 詳細信息
    * @param recoverable 是否可恢復
    * @param recoveryAction 恢復操作
+   * @param severity 嚴重程度
+   * @returns 應用錯誤
+   */
+  public createAppError(
+    error: Error | string,
+    type: ErrorType = ErrorType.UNKNOWN_ERROR,
+    details?: string,
+    recoverable: boolean = false,
+    recoveryAction?: () => void,
+    severity: ErrorSeverity = ErrorSeverity.MEDIUM
+  ): AppError {
+    // 創建錯誤對象
+    const appError: AppError = error instanceof Error
+      ? error as AppError
+      : new Error(error) as AppError;
+    
+    // 添加自定義屬性
+    appError.type = type;
+    appError.details = details;
+    appError.timestamp = new Date();
+    appError.recoverable = recoverable;
+    appError.recoveryAction = recoveryAction;
+    appError.severity = severity;
+    
+    return appError;
+  }
+  
+  /**
+   * 處理錯誤
+   * 
+   * @param error 錯誤對象或錯誤信息
+   * @param type 錯誤類型
+   * @param details 詳細信息
+   * @param recoverable 是否可恢復
+   * @param recoveryAction 恢復操作
+   * @param severity 嚴重程度
+   * @returns 錯誤ID，用於引用
    */
   public handleError(
     error: Error | string,
     type: ErrorType = ErrorType.UNKNOWN_ERROR,
     details?: string,
     recoverable: boolean = false,
-    recoveryAction?: () => void
-  ): void {
-    // 構建錯誤對象
-    const errorObj: AppError = {
+    recoveryAction?: () => void,
+    severity: ErrorSeverity = ErrorSeverity.MEDIUM
+  ): string {
+    // 創建應用錯誤
+    const appError = this.createAppError(
+      error,
       type,
-      message: typeof error === 'string' ? error : error.message,
       details,
-      timestamp: new Date(),
       recoverable,
       recoveryAction,
-      technicalDetails: typeof error !== 'string' ? error : undefined
-    };
+      severity
+    );
+    
+    // 生成錯誤ID
+    const errorId = this.generateErrorId();
     
     // 記錄錯誤
-    console.error(`[${errorObj.type}] ${errorObj.message}`, errorObj);
-    this.errors.push(errorObj);
+    this.logError(errorId, appError);
     
-    // 顯示適合的用戶提示
-    this.showUserFriendlyError(errorObj);
+    // 將錯誤添加到遙測隊列
+    this.queueTelemetry(errorId, appError);
     
-    // 通知監聽器
-    this.notifyListeners(errorObj);
-    
-    // 如果是嚴重錯誤，發送遙測數據
-    if (this.isCriticalError(type)) {
-      this.sendErrorTelemetry(errorObj);
+    // 如果錯誤嚴重，觸發全局錯誤處理
+    if (severity === ErrorSeverity.FATAL) {
+      this.handleFatalError(errorId, appError);
     }
-  }
-  
-  /**
-   * 顯示用戶友好的錯誤提示
-   */
-  private showUserFriendlyError(error: AppError): void {
-    // 根據錯誤類型提供具體的錯誤提示和建議
-    const errorInfo = this.getUserFriendlyErrorInfo(error);
     
-         // 根據錯誤可恢復性決定顯示方式
-     if (error.recoverable) {
-       toast.error(
-         errorInfo.title,
-         {
-           description: errorInfo.suggestion 
-             ? `${errorInfo.message} ${errorInfo.suggestion}`
-             : errorInfo.message,
-           duration: 8000,
-           action: {
-             label: errorInfo.actionLabel || "重試",
-             onClick: () => error.recoveryAction?.()
-           }
-         }
-       );
-     } else {
-       toast.error(
-         errorInfo.title,
-         {
-           description: errorInfo.suggestion 
-             ? `${errorInfo.message} ${errorInfo.suggestion}`
-             : errorInfo.message,
-           duration: 10000,
-         }
-       );
-     }
+    return errorId;
   }
   
   /**
-   * 獲取用戶友好的錯誤信息
+   * 嘗試恢復錯誤
+   * 
+   * @param errorId 錯誤ID
+   * @returns 是否成功恢復
    */
-  private getUserFriendlyErrorInfo(error: AppError): {
-    title: string;
-    message: string;
-    suggestion?: string;
-    actionLabel?: string;
-  } {
-    switch (error.type) {
-      case ErrorType.PHOTO_PROCESSING_ERROR:
-        return {
-          title: "照片處理失敗",
-          message: "處理照片時發生錯誤，可能是照片格式不支援或照片已損壞。",
-          suggestion: "請嘗試使用不同的照片，或轉換為常見格式如 JPG 或 PNG。",
-          actionLabel: "重新處理"
-        };
-        
-      case ErrorType.PHOTO_LOADING_ERROR:
-        return {
-          title: "照片載入失敗",
-          message: "無法載入照片，可能是檔案已損壞或格式不支援。",
-          suggestion: "請嘗試重新選擇照片，或檢查檔案是否完整。",
-          actionLabel: "重新選擇"
-        };
-        
-      case ErrorType.MEMORY_LIMIT_ERROR:
-        return {
-          title: "記憶體不足",
-          message: "處理大量或高解析度照片時記憶體不足。",
-          suggestion: "請嘗試關閉其他應用程式，或分批處理較少量的照片。",
-          actionLabel: "釋放記憶體並重試"
-        };
-        
-      case ErrorType.WORKER_CRASH_ERROR:
-        return {
-          title: "處理引擎崩潰",
-          message: "照片處理程序意外停止，可能是因為照片太大或格式特殊。",
-          suggestion: "請嘗試使用較小的照片或轉換為標準格式。",
-          actionLabel: "重啟處理引擎"
-        };
-        
-      case ErrorType.DATABASE_ERROR:
-        return {
-          title: "資料儲存錯誤",
-          message: "無法儲存處理結果至本地資料庫。",
-          suggestion: "請檢查瀏覽器儲存空間是否足夠，或嘗試清除瀏覽器快取。",
-          actionLabel: "清理空間並重試"
-        };
-        
-      case ErrorType.FILE_SIZE_ERROR:
-        return {
-          title: "檔案過大",
-          message: "所選檔案超出處理上限。",
-          suggestion: "請使用圖片壓縮工具減少檔案大小，或選擇較小的檔案。",
-          actionLabel: "了解更多"
-        };
-        
-      case ErrorType.FILE_TYPE_ERROR:
-        return {
-          title: "不支援的檔案類型",
-          message: "所選檔案類型不受支援。",
-          suggestion: "請使用常見的圖片格式，如 JPG、PNG、WebP 或 HEIC。",
-          actionLabel: "查看支援的格式"
-        };
-        
-      case ErrorType.UNSUPPORTED_BROWSER_ERROR:
-        return {
-          title: "瀏覽器不支援",
-          message: "您的瀏覽器不支援此功能。",
-          suggestion: "請嘗試使用最新版本的 Chrome、Firefox 或 Edge。",
-          actionLabel: "了解更多"
-        };
-        
-      case ErrorType.NETWORK_ERROR:
-        return {
-          title: "網路錯誤",
-          message: "無法連線至網路資源，請檢查您的網路連線。",
-          suggestion: "如果您的網路正常，請稍後再試。",
-          actionLabel: "重試"
-        };
-        
-      case ErrorType.RESOURCE_LIMIT_ERROR:
-        return {
-          title: "系統資源不足",
-          message: "您的設備資源不足，無法完成此操作。",
-          suggestion: "請關閉其他程式或分批處理較少量的照片。",
-          actionLabel: "簡化處理"
-        };
-        
-      default:
-        return {
-          title: "發生錯誤",
-          message: error.message || "應用程式遇到未預期的錯誤。",
-          suggestion: "請重新整理頁面後再試。若問題持續發生，請聯絡支援團隊。",
-          actionLabel: "重新整理"
-        };
-    }
+  public tryRecover(errorId: string): boolean {
+    // 實際應用中，這裡應該查找錯誤並嘗試恢復
+    return false;
   }
   
   /**
-   * 檢查是否為嚴重錯誤
+   * 嘗試重試操作
+   * 
+   * @param operationId 操作ID
+   * @param operation 操作函數
+   * @param maxRetries 最大重試次數
+   * @param delay 重試延遲 (毫秒)
+   * @returns 操作結果的Promise
    */
-  private isCriticalError(type: ErrorType): boolean {
-    return [
-      ErrorType.SYSTEM_ERROR,
-      ErrorType.DATABASE_ERROR,
-      ErrorType.WORKER_CRASH_ERROR
-    ].includes(type);
-  }
-  
-  /**
-   * 發送錯誤遙測數據（僅在生產環境啟用）
-   */
-  private sendErrorTelemetry(error: AppError): void {
-    // 在生產環境中，可以發送到錯誤跟踪服務
-    // 這裡只做簡單的日誌記錄
-    if (import.meta.env.PROD) {
-      console.info("發送錯誤遙測數據：", {
-        type: error.type,
-        message: error.message,
-        timestamp: error.timestamp,
-        userAgent: navigator.userAgent,
-      });
-    }
-  }
-  
-  /**
-   * 添加錯誤監聽器
-   */
-  public addErrorListener(listener: (error: AppError) => void): void {
-    this.errorListeners.push(listener);
-  }
-  
-  /**
-   * 移除錯誤監聽器
-   */
-  public removeErrorListener(listener: (error: AppError) => void): void {
-    this.errorListeners = this.errorListeners.filter(l => l !== listener);
-  }
-  
-  /**
-   * 通知所有錯誤監聽器
-   */
-  private notifyListeners(error: AppError): void {
-    this.errorListeners.forEach(listener => {
-      try {
-        listener(error);
-      } catch (e) {
-        console.error("Error in error listener:", e);
+  public async retry<T>(
+    operationId: string,
+    operation: () => Promise<T>,
+    maxRetries: number = 3,
+    delay: number = 1000
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      const retryCount = (this.retryMap.get(operationId) || 0) + 1;
+      this.retryMap.set(operationId, retryCount);
+      
+      if (retryCount <= maxRetries) {
+        console.warn(`Retrying operation ${operationId} (${retryCount}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.retry(operationId, operation, maxRetries, delay);
+      } else {
+        this.retryMap.delete(operationId);
+        throw error;
       }
-    });
-  }
-  
-  /**
-   * 獲取錯誤歷史
-   */
-  public getErrorHistory(): AppError[] {
-    return [...this.errors];
-  }
-  
-  /**
-   * 清除錯誤歷史
-   */
-  public clearErrorHistory(): void {
-    this.errors = [];
-  }
-  
-  /**
-   * 根據錯誤類型和細節，提供自動恢復建議
-   */
-  public getRecoveryRecommendation(error: AppError): string {
-    switch (error.type) {
-      case ErrorType.MEMORY_LIMIT_ERROR:
-        return "建議關閉其他應用程式，釋放記憶體，並嘗試分批處理較少量的照片。";
-        
-      case ErrorType.PHOTO_PROCESSING_ERROR:
-        return "建議重新啟動處理引擎，並嘗試使用標準圖片格式如 JPG 或 PNG。";
-        
-      case ErrorType.DATABASE_ERROR:
-        return "建議清理瀏覽器緩存和儲存空間，然後重新整理頁面。";
-        
-      case ErrorType.WORKER_CRASH_ERROR:
-        return "建議重新載入頁面，並嘗試減少同時處理的照片數量。";
-        
-      default:
-        return "建議重新整理頁面，如問題持續出現，請使用其他瀏覽器嘗試。";
     }
+  }
+  
+  /**
+   * 生成錯誤ID
+   * 
+   * @returns 錯誤ID
+   */
+  private generateErrorId(): string {
+    return `err-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  }
+  
+  /**
+   * 記錄錯誤
+   * 
+   * @param errorId 錯誤ID
+   * @param error 錯誤
+   */
+  private logError(errorId: string, error: AppError): void {
+    // 打印到控制台
+    console.error(`[${error.type}] [${error.severity}] ${error.message}`, {
+      errorId,
+      details: error.details,
+      timestamp: error.timestamp,
+      recoverable: error.recoverable,
+      stack: error.stack
+    });
+    
+    // 實際應用中，這裡可以將錯誤發送到日誌服務
+  }
+  
+  /**
+   * 將錯誤添加到遙測隊列
+   * 
+   * @param errorId 錯誤ID
+   * @param error 錯誤
+   */
+  private queueTelemetry(errorId: string, error: AppError): void {
+    // 添加到隊列
+    this.telemetryQueue.push({
+      error,
+      type: error.type,
+      details: error.details,
+      timestamp: error.timestamp,
+      severity: error.severity
+    });
+    
+    // 如果隊列達到一定大小，發送遙測數據
+    if (this.telemetryQueue.length >= 10) {
+      this.sendTelemetry();
+    }
+  }
+  
+  /**
+   * 發送遙測數據
+   */
+  private sendTelemetry(): void {
+    // 實際應用中，這裡應該發送遙測數據到服務器
+    // 例如，使用 fetch API 發送數據
+    
+    // 清空隊列
+    this.telemetryQueue = [];
+  }
+  
+  /**
+   * 處理致命錯誤
+   * 
+   * @param errorId 錯誤ID
+   * @param error 錯誤
+   */
+  private handleFatalError(errorId: string, error: AppError): void {
+    // 實際應用中，這裡可以顯示全局錯誤頁面
+    // 或者重新加載應用等
+    console.error(`Fatal error occurred: ${errorId}`);
   }
 }
 
-// 導出單例實例
+// 導出單例
 export const errorHandler = new ErrorHandlingService();
 
 // 全局錯誤捕獲
@@ -337,26 +301,39 @@ export const setupGlobalErrorHandler = (): void => {
     errorHandler.handleError(
       event.error || event.message, 
       ErrorType.SYSTEM_ERROR, 
-      "全局未處理的錯誤"
+      "全局未處理的錯誤",
+      false,
+      undefined,
+      ErrorSeverity.HIGH
     );
+    
+    // 避免控制台顯示額外的錯誤
+    event.preventDefault();
   });
   
   window.addEventListener("unhandledrejection", (event) => {
     errorHandler.handleError(
       event.reason?.message || "未處理的 Promise 拒絕",
       ErrorType.SYSTEM_ERROR,
-      "未處理的 Promise 異常"
+      "未處理的 Promise 異常",
+      false,
+      undefined,
+      ErrorSeverity.HIGH
     );
+    
+    // 避免控制台顯示額外的錯誤
+    event.preventDefault();
   });
 };
 
-// 有用的錯誤處理包裝函數
+// 有用的錯誤處理包裝函數，使用重試機制
 export function withErrorHandling<T>(
   func: (...args: any[]) => Promise<T>,
   errorType: ErrorType,
   errorMessage: string,
   recoverable: boolean = false,
-  recoveryAction?: () => void
+  recoveryAction?: () => void,
+  severity: ErrorSeverity = ErrorSeverity.MEDIUM
 ): (...args: any[]) => Promise<T | null> {
   return async (...args: any[]): Promise<T | null> => {
     try {
@@ -367,10 +344,63 @@ export function withErrorHandling<T>(
         errorType,
         errorMessage,
         recoverable,
-        recoveryAction
+        recoveryAction,
+        severity
       );
       return null;
     }
+  };
+}
+
+// 使用自動重試功能的包裝函數
+export function withRetry<T>(
+  func: (...args: any[]) => Promise<T>,
+  options: {
+    maxAttempts?: number,
+    initialDelay?: number,
+    errorType?: ErrorType,
+    errorMessage?: string,
+    severity?: ErrorSeverity
+  } = {}
+): (...args: any[]) => Promise<T> {
+  const maxAttempts = options.maxAttempts || 3;
+  const initialDelay = options.initialDelay || 1000;
+  const errorType = options.errorType || ErrorType.UNKNOWN_ERROR;
+  const errorMessage = options.errorMessage || "操作失敗";
+  const severity = options.severity || ErrorSeverity.MEDIUM;
+  
+  return async (...args: any[]): Promise<T> => {
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await func(...args);
+      } catch (error) {
+        lastError = error as Error;
+        
+        // 如果這是最後一次嘗試，不再重試
+        if (attempt === maxAttempts) {
+          break;
+        }
+        
+        console.log(`嘗試 ${attempt}/${maxAttempts} 失敗，將在 ${initialDelay * attempt}ms 後重試`);
+        
+        // 使用延遲來等待指定時間
+        await new Promise(resolve => setTimeout(resolve, initialDelay * attempt));
+      }
+    }
+    
+    // 全部嘗試都失敗
+    errorHandler.handleError(
+      lastError as Error,
+      errorType,
+      `${errorMessage} (已重試 ${maxAttempts} 次)`,
+      false,
+      undefined,
+      severity
+    );
+    
+    throw lastError;
   };
 }
 
@@ -379,6 +409,13 @@ export function useErrorHandler() {
   return {
     handleError: errorHandler.handleError.bind(errorHandler),
     getErrorHistory: errorHandler.getErrorHistory.bind(errorHandler),
-    clearErrorHistory: errorHandler.clearErrorHistory.bind(errorHandler)
+    clearErrorHistory: errorHandler.clearErrorHistory.bind(errorHandler),
+    getErrorStats: errorHandler.getErrorStats.bind(errorHandler),
+    getErrorById: errorHandler.getErrorById.bind(errorHandler),
+    getRecoveryRecommendation: errorHandler.getRecoveryRecommendation.bind(errorHandler),
+    setRetryConfig: errorHandler.setRetryConfig.bind(errorHandler),
+    setReportConfig: errorHandler.setReportConfig.bind(errorHandler),
+    cancelRetry: errorHandler.cancelRetry.bind(errorHandler),
+    cancelAllRetries: errorHandler.cancelAllRetries.bind(errorHandler)
   };
 } 
